@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import initialCatalog from '../stations.json';
-import type { BandFilter, RadioStation, StationCatalog } from './types/radio';
+import type { RadioStation, StationCatalog, StationFilter } from './types/radio';
 import { useRadioPlayer } from './hooks/useRadioPlayer';
 import { Header } from './components/Header';
 import { TunerConsole } from './components/TunerConsole';
@@ -39,7 +39,7 @@ export default function App() {
   const [stations, setStations] = useState<RadioStation[]>(SEED_STATIONS);
   const [selectedId, setSelectedId] = useState<string>(() => loadInitialStationId(SEED_STATIONS));
   const [favoriteIds, setFavoriteIds] = useState<string[]>(() => loadStoredFavorites());
-  const [bandFilter, setBandFilter] = useState<BandFilter>('ALL');
+  const [stationFilter, setStationFilter] = useState<StationFilter>('ALL');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [liveStatuses, setLiveStatuses] = useState<Record<string, 'live' | 'off-air'>>({});
   const [isCheckingHealth, setIsCheckingHealth] = useState<boolean>(false);
@@ -174,7 +174,9 @@ export default function App() {
               stationIndex={selectedIndex}
               totalStations={stations.length}
               status={player.status}
-              errorMessage={player.errorMessage}
+              errorInfo={player.errorInfo}
+              isOnline={player.isOnline}
+              usingFallback={player.usingFallback}
               volume={player.volume}
               isMuted={player.isMuted}
               seekState={player.seekState}
@@ -184,6 +186,7 @@ export default function App() {
               isFavorite={favoriteIds.includes(selectedStation.id)}
               onToggleFavorite={handleToggleFavorite}
               onTogglePlayPause={() => player.togglePlayPause(selectedStation)}
+              onRetry={player.retryCurrentStation}
               onSeekBy={player.seekBy}
               onSeekToOffsetFromEnd={player.seekToOffsetFromEnd}
               onJumpToLive={player.jumpToLive}
@@ -201,10 +204,10 @@ export default function App() {
               playbackStatus={player.status}
               liveStatuses={liveStatuses}
               isCheckingHealth={isCheckingHealth}
-              bandFilter={bandFilter}
+              stationFilter={stationFilter}
               searchQuery={searchQuery}
               favoriteIds={favoriteIds}
-              onBandFilterChange={setBandFilter}
+              onStationFilterChange={setStationFilter}
               onSearchChange={setSearchQuery}
               onSelectStation={handleSelectStation}
               onToggleFavorite={handleToggleFavorite}

@@ -2,7 +2,11 @@ package com.akashvani.malayalam
 
 import android.Manifest
 import android.content.ComponentName
+import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.res.Configuration
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -28,11 +32,15 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.compose.material.icons.rounded.Forward10
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Replay10
+import androidx.compose.material.icons.rounded.SystemUpdate
 import androidx.compose.material.icons.rounded.Timer
+import androidx.compose.material.icons.rounded.WifiOff
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -46,8 +54,10 @@ import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -58,9 +68,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
@@ -78,12 +90,22 @@ private val InkDark = Color(0xFF111318)
 private val InkMuted = Color(0xFF5A6070)
 private val Hairline = Color(0xFFE2E5EB)
 private val AkashvaniRed = Color(0xFFC8232C)
+private val ErrorBg = Color(0xFFFDF4F4)
+private val ErrorText = Color(0xFF7F1D1D)
 
 class MainActivity : ComponentActivity() {
 
     private val notificationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { /* optional for Android 13+ notification controls */ }
+
+    // Lock system font scaling to 1.0x so large phone font settings never crowd buttons
+    override fun attachBaseContext(newBase: Context) {
+        val config = Configuration(newBase.resources.configuration).apply {
+            fontScale = 1.0f
+        }
+        super.attachBaseContext(newBase.createConfigurationContext(config))
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -96,9 +118,18 @@ class MainActivity : ComponentActivity() {
         }
 
         setContent {
-            MaterialTheme {
-                Surface(modifier = Modifier.fillMaxSize(), color = CanvasBg) {
-                    AkashvaniAppScreen()
+            val currentDensity = LocalDensity.current
+            // Enforce 1.0f fontScale inside Jetpack Compose as well
+            CompositionLocalProvider(
+                LocalDensity provides Density(
+                    density = currentDensity.density,
+                    fontScale = 1.0f
+                )
+            ) {
+                MaterialTheme {
+                    Surface(modifier = Modifier.fillMaxSize(), color = CanvasBg) {
+                        AkashvaniAppScreen()
+                    }
                 }
             }
         }
@@ -108,12 +139,16 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun AkashvaniAppScreen() {
     val context = LocalContext.current
+    val diagnostics by PlaybackDiagnostics.state.collectAsState()
 
     var stations by remember { mutableStateOf(StationRepository.builtInStations) }
+    // Default station is always Akashvani Kerala (#1)
     var currentStation by remember { mutableStateOf(StationRepository.builtInStations.first()) }
+    var selectedTab by remember { mutableStateOf("all") }
     var isPlaying by remember { mutableStateOf(false) }
     var isBuffering by remember { mutableStateOf(false) }
     var statusText by remember { mutableStateOf("Ready to tune") }
+    var updateInfo by remember { mutableStateOf<AppUpdateInfo?>(null) }
 
     // Live HLS timeshift window state
     var windowDurationMs by remember { mutableLongStateOf(0L) }
@@ -126,9 +161,13 @@ private fun AkashvaniAppScreen() {
 
     var controller by remember { mutableStateOf<MediaController?>(null) }
 
-    // Sync remote stations.json from GitHub on startup
+    // Sync remote stations.json and check GitHub Releases for app updates on startup
     LaunchedEffect(Unit) {
         stations = StationRepository.fetchStationsRemoteOrFallback()
+        updateInfo = PlaybackDiagnostics.checkLatestGithubRelease(
+            currentVersionCode = BuildConfig.VERSION_CODE,
+            githubRepo = BuildConfig.GITHUB_REPO
+        )
     }
 
     // Bind to background Media3 RadioPlaybackService
@@ -149,7 +188,7 @@ private fun AkashvaniAppScreen() {
             override fun onPlaybackStateChanged(playbackState: Int) {
                 isBuffering = playbackState == Player.STATE_BUFFERING
                 statusText = when (playbackState) {
-                    Player.STATE_BUFFERING -> "Connecting to Akashvani..."
+                    Player.STATE_BUFFERING -> "Connecting..."
                     Player.STATE_READY -> if (controller?.isPlaying == true) "On Air" else "Paused"
                     Player.STATE_ENDED -> "Stream ended"
                     else -> "Ready to tune"
@@ -196,10 +235,27 @@ private fun AkashvaniAppScreen() {
     fun playStation(station: RadioStation) {
         currentStation = station
         val player = controller ?: return
+        if (!diagnostics.isOnline) {
+            PlaybackDiagnostics.setOnline(false)
+        } else {
+            PlaybackDiagnostics.clearError(usingFallback = false)
+        }
+
+        val extras = Bundle().apply {
+            putString(RadioPlaybackService.EXTRA_STATION_NAME, station.name)
+            putString(RadioPlaybackService.EXTRA_STATION_SCHEDULE, station.schedule)
+            putString(RadioPlaybackService.EXTRA_PRIMARY_URL, station.streamUrl)
+            putStringArrayList(
+                RadioPlaybackService.EXTRA_FALLBACK_URLS,
+                ArrayList(station.fallbackUrls)
+            )
+        }
+
         val metadata = MediaMetadata.Builder()
             .setTitle(station.name)
             .setArtist("${station.city} · ${station.frequency}")
             .setDisplayTitle(station.name)
+            .setExtras(extras)
             .build()
         val item = MediaItem.Builder()
             .setMediaId(station.id)
@@ -214,7 +270,7 @@ private fun AkashvaniAppScreen() {
 
     fun togglePlayPause() {
         val player = controller ?: return
-        if (player.mediaItemCount == 0) {
+        if (player.mediaItemCount == 0 || diagnostics.errorCode != PlaybackErrorCode.NONE) {
             playStation(currentStation)
         } else if (player.isPlaying) {
             player.pause()
@@ -235,12 +291,29 @@ private fun AkashvaniAppScreen() {
     val secondsBehindLive = ((windowDurationMs - currentPositionMs).coerceAtLeast(0L) / 1000L)
     val isLiveEdge = secondsBehindLive <= 4L
 
+    val displayStatus = when {
+        !diagnostics.isOnline -> "No internet"
+        diagnostics.isReconnecting && diagnostics.usingFallback -> "Trying backup stream..."
+        diagnostics.isReconnecting -> "Reconnecting (${diagnostics.reconnectAttempt}/4)..."
+        diagnostics.errorCode != PlaybackErrorCode.NONE -> "Station unavailable"
+        isPlaying && diagnostics.usingFallback -> "On Air (Backup)"
+        else -> statusText
+    }
+
+    val filteredStations = remember(stations, selectedTab) {
+        when (selectedTab) {
+            "akashvani" -> stations.filter { it.category == "akashvani" }
+            "kerala-fm" -> stations.filter { it.category == "kerala-fm" }
+            else -> stations
+        }
+    }
+
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
             .padding(horizontal = 20.dp),
         contentPadding = PaddingValues(top = 24.dp, bottom = 36.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+        verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         item {
             Row(
@@ -248,23 +321,29 @@ private fun AkashvaniAppScreen() {
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column {
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = "Akashvani",
                         fontSize = 26.sp,
                         fontWeight = FontWeight.Bold,
-                        color = InkDark
+                        color = InkDark,
+                        maxLines = 1
                     )
                     Text(
                         text = "ആകാശവാണി · Kerala Live Radio",
                         fontSize = 13.sp,
-                        color = InkMuted
+                        color = InkMuted,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
 
+                Spacer(Modifier.width(12.dp))
+
                 OutlinedButton(
                     onClick = { showSleepMenu = !showSleepMenu },
-                    shape = RoundedCornerShape(10.dp)
+                    shape = RoundedCornerShape(10.dp),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
                 ) {
                     Icon(
                         imageVector = Icons.Rounded.Timer,
@@ -276,8 +355,70 @@ private fun AkashvaniAppScreen() {
                     Text(
                         text = if (sleepSecondsLeft > 0L) formatTime(sleepSecondsLeft) else "Sleep",
                         color = if (sleepSecondsLeft > 0L) AkashvaniRed else InkDark,
-                        fontSize = 13.sp
+                        fontSize = 13.sp,
+                        maxLines = 1,
+                        softWrap = false
                     )
+                }
+            }
+        }
+
+        // Optional In-App Update Notice (opens GitHub Release to update in place without uninstalling)
+        updateInfo?.let { update ->
+            item {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(CardSurface)
+                        .border(1.dp, AkashvaniRed.copy(alpha = 0.35f), RoundedCornerShape(14.dp))
+                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        modifier = Modifier.weight(1f),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.SystemUpdate,
+                            contentDescription = "Update available",
+                            tint = AkashvaniRed,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(Modifier.width(10.dp))
+                        Column {
+                            Text(
+                                text = "Update ready (${update.latestTag})",
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = InkDark,
+                                maxLines = 1
+                            )
+                            Text(
+                                text = "Updates directly without uninstalling",
+                                fontSize = 12.sp,
+                                color = InkMuted,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    Button(
+                        onClick = {
+                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(update.releasePageUrl))
+                            context.startActivity(intent)
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = AkashvaniRed,
+                            contentColor = Color.White
+                        ),
+                        shape = RoundedCornerShape(9.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                    ) {
+                        Text("Update", fontSize = 12.sp, maxLines = 1, softWrap = false)
+                    }
                 }
             }
         }
@@ -290,30 +431,36 @@ private fun AkashvaniAppScreen() {
                         .clip(RoundedCornerShape(14.dp))
                         .background(CardSurface)
                         .border(1.dp, Hairline, RoundedCornerShape(14.dp))
-                        .padding(12.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween
+                        .padding(10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     listOf(0 to "Off", 15 to "15m", 30 to "30m", 45 to "45m", 60 to "60m").forEach { (mins, label) ->
+                        val active = if (mins == 0) {
+                            sleepSecondsLeft == 0L
+                        } else {
+                            sleepSecondsLeft > 0L && ((sleepSecondsLeft + 59) / 60).toInt() == mins
+                        }
                         Button(
                             onClick = {
                                 sleepSecondsLeft = mins * 60L
                                 showSleepMenu = false
                             },
+                            modifier = Modifier.weight(1f),
                             colors = ButtonDefaults.buttonColors(
-                                containerColor = if (sleepSecondsLeft > 0L && mins > 0 && sleepSecondsLeft <= mins * 60L) AkashvaniRed else CanvasBg,
-                                contentColor = if (sleepSecondsLeft > 0L && mins > 0 && sleepSecondsLeft <= mins * 60L) Color.White else InkDark
+                                containerColor = if (active) AkashvaniRed else CanvasBg,
+                                contentColor = if (active) Color.White else InkDark
                             ),
-                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                            contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp),
                             shape = RoundedCornerShape(8.dp)
                         ) {
-                            Text(label, fontSize = 12.sp)
+                            Text(label, fontSize = 12.sp, maxLines = 1, softWrap = false)
                         }
                     }
                 }
             }
         }
 
-        // Main Receiver Card with HUGE Play/Pause Button & Live Seek Bar
+        // Main Receiver Card with HUGE Play/Pause Button, Live Seek Bar & Exact Failure Diagnosis
         item {
             Column(
                 modifier = Modifier
@@ -321,14 +468,16 @@ private fun AkashvaniAppScreen() {
                     .clip(RoundedCornerShape(24.dp))
                     .background(CardSurface)
                     .border(1.dp, Hairline, RoundedCornerShape(24.dp))
-                    .padding(24.dp),
+                    .padding(22.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Text(
-                    text = "${currentStation.band} · ${currentStation.frequency} · $statusText",
+                    text = "${currentStation.band} · ${currentStation.frequency} · $displayStatus",
                     fontSize = 12.sp,
                     fontFamily = FontFamily.Monospace,
-                    color = if (isPlaying) AkashvaniRed else InkMuted
+                    color = if (isPlaying) AkashvaniRed else InkMuted,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
 
                 Spacer(Modifier.height(8.dp))
@@ -346,22 +495,24 @@ private fun AkashvaniAppScreen() {
                     Text(
                         text = currentStation.malayalamName,
                         fontSize = 15.sp,
-                        color = InkMuted
+                        color = InkMuted,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
 
-                Spacer(Modifier.height(28.dp))
+                Spacer(Modifier.height(26.dp))
 
-                // HUGE Play / Pause Focal Button (136dp)
+                // HUGE Play / Pause Focal Button (138dp)
                 Box(
                     modifier = Modifier
-                        .size(136.dp)
+                        .size(138.dp)
                         .clip(CircleShape)
                         .background(if (isPlaying) InkDark else AkashvaniRed)
                         .clickable { togglePlayPause() },
                     contentAlignment = Alignment.Center
                 ) {
-                    if (isBuffering) {
+                    if (isBuffering || diagnostics.isReconnecting) {
                         CircularProgressIndicator(
                             color = Color.White,
                             strokeWidth = 4.dp,
@@ -377,7 +528,102 @@ private fun AkashvaniAppScreen() {
                     }
                 }
 
-                Spacer(Modifier.height(28.dp))
+                // Exact Plain-English Offline / Error Diagnosis Card
+                if (!diagnostics.isOnline || diagnostics.errorTitle != null) {
+                    Spacer(Modifier.height(20.dp))
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(ErrorBg)
+                            .border(1.dp, AkashvaniRed.copy(alpha = 0.25f), RoundedCornerShape(14.dp))
+                            .padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.Top,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Icon(
+                                imageVector = if (!diagnostics.isOnline) Icons.Rounded.WifiOff else Icons.Rounded.ErrorOutline,
+                                contentDescription = null,
+                                tint = AkashvaniRed,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = diagnostics.errorTitle ?: "No internet connection",
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = ErrorText
+                                )
+                                Spacer(Modifier.height(2.dp))
+                                Text(
+                                    text = diagnostics.errorDetail
+                                        ?: "Check Wi-Fi or mobile data. Playback will resume automatically when internet returns.",
+                                    fontSize = 13.sp,
+                                    color = ErrorText.copy(alpha = 0.9f),
+                                    lineHeight = 18.sp
+                                )
+                            }
+                        }
+
+                        if (diagnostics.isOnline) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                OutlinedButton(
+                                    onClick = { playStation(currentStation) },
+                                    modifier = Modifier.weight(1f),
+                                    shape = RoundedCornerShape(10.dp),
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Refresh,
+                                        contentDescription = null,
+                                        tint = InkDark,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(Modifier.width(6.dp))
+                                    Text(
+                                        text = "Try Again",
+                                        fontSize = 13.sp,
+                                        color = InkDark,
+                                        maxLines = 1,
+                                        softWrap = false
+                                    )
+                                }
+
+                                if (currentStation.id != "akashvani-kerala") {
+                                    Button(
+                                        onClick = {
+                                            val primary = stations.firstOrNull { it.id == "akashvani-kerala" }
+                                                ?: stations.first()
+                                            playStation(primary)
+                                        },
+                                        modifier = Modifier.weight(1f),
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = AkashvaniRed,
+                                            contentColor = Color.White
+                                        ),
+                                        shape = RoundedCornerShape(10.dp),
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)
+                                    ) {
+                                        Text(
+                                            text = "Akashvani Kerala",
+                                            fontSize = 13.sp,
+                                            maxLines = 1,
+                                            softWrap = false
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(24.dp))
 
                 // Live Timeshift Seek Controls
                 Row(
@@ -386,10 +632,17 @@ private fun AkashvaniAppScreen() {
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = if (isSeekable) "Buffer ${formatTime(windowDurationMs / 1000L)}" else "Live Broadcast",
+                        text = if (isSeekable) {
+                            "Buffer ${formatTime(windowDurationMs / 1000L)}"
+                        } else if (currentStation.streamUrl.contains(".m3u8")) {
+                            "Live Broadcast"
+                        } else {
+                            "Live FM Stream"
+                        },
                         fontSize = 12.sp,
                         fontFamily = FontFamily.Monospace,
-                        color = InkMuted
+                        color = InkMuted,
+                        maxLines = 1
                     )
 
                     Text(
@@ -397,7 +650,8 @@ private fun AkashvaniAppScreen() {
                         fontSize = 12.sp,
                         fontFamily = FontFamily.Monospace,
                         fontWeight = FontWeight.SemiBold,
-                        color = if (isLiveEdge) AkashvaniRed else InkDark
+                        color = if (isLiveEdge) AkashvaniRed else InkDark,
+                        maxLines = 1
                     )
                 }
 
@@ -430,9 +684,16 @@ private fun AkashvaniAppScreen() {
                     OutlinedButton(
                         onClick = { controller?.seekToDefaultPosition() },
                         enabled = isSeekable && !isLiveEdge,
-                        shape = RoundedCornerShape(10.dp)
+                        shape = RoundedCornerShape(10.dp),
+                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
                     ) {
-                        Text("Jump to Live", fontSize = 13.sp, color = if (!isLiveEdge) AkashvaniRed else InkMuted)
+                        Text(
+                            text = "Jump to Live",
+                            fontSize = 13.sp,
+                            color = if (!isLiveEdge) AkashvaniRed else InkMuted,
+                            maxLines = 1,
+                            softWrap = false
+                        )
                     }
 
                     IconButton(onClick = { seekBy(15_000L) }, enabled = isSeekable && !isLiveEdge) {
@@ -442,17 +703,57 @@ private fun AkashvaniAppScreen() {
             }
         }
 
+        // Category Filter Tabs: All / Akashvani / Kerala FM
         item {
-            Text(
-                text = "Kerala Stations",
-                fontSize = 18.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = InkDark,
-                modifier = Modifier.padding(top = 4.dp)
-            )
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    text = "Kerala Stations (${filteredStations.size})",
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = InkDark,
+                    maxLines = 1,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(CardSurface)
+                        .border(1.dp, Hairline, RoundedCornerShape(12.dp))
+                        .padding(4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    listOf(
+                        "all" to "All",
+                        "akashvani" to "Akashvani",
+                        "kerala-fm" to "Kerala FM"
+                    ).forEach { (tabId, label) ->
+                        val active = selectedTab == tabId
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(9.dp))
+                                .background(if (active) InkDark else Color.Transparent)
+                                .clickable { selectedTab = tabId }
+                                .padding(vertical = 10.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = label,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = if (active) Color.White else InkMuted,
+                                maxLines = 1,
+                                softWrap = false
+                            )
+                        }
+                    }
+                }
+            }
         }
 
-        items(stations, key = { it.id }) { station ->
+        items(filteredStations, key = { it.id }) { station ->
             val selected = station.id == currentStation.id
             Column(
                 modifier = Modifier
@@ -477,19 +778,32 @@ private fun AkashvaniAppScreen() {
                             text = station.name,
                             fontSize = 16.sp,
                             fontWeight = FontWeight.SemiBold,
-                            color = if (selected) AkashvaniRed else InkDark
+                            color = if (selected) AkashvaniRed else InkDark,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                         Text(
-                            text = "${station.city} · ${station.band} ${station.frequency}",
+                            text = "${station.city} · ${station.frequency}",
                             fontSize = 12.sp,
-                            color = InkMuted
+                            color = InkMuted,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
+                    Spacer(Modifier.width(8.dp))
                     Text(
-                        text = if (selected && isPlaying) "Playing" else if (station.schedule == "daytime") "Daytime" else "24x7",
+                        text = if (selected && isPlaying) {
+                            "Playing"
+                        } else if (station.schedule == "daytime") {
+                            "Daytime"
+                        } else {
+                            "Live"
+                        },
                         fontSize = 12.sp,
                         fontFamily = FontFamily.Monospace,
-                        color = if (selected) AkashvaniRed else InkMuted
+                        color = if (selected) AkashvaniRed else InkMuted,
+                        maxLines = 1,
+                        softWrap = false
                     )
                 }
             }

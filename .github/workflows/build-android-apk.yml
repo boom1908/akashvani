@@ -41,17 +41,27 @@ jobs:
         with:
           gradle-version: "8.9"
 
-      - name: Generate signing keystore for installable release APK
+      - name: Ensure permanent release signing keystore (enables in-place updates)
         run: |
-          keytool -genkeypair -v \
-            -keystore android/app/akashvani-release.jks \
-            -storepass akashvani2026 \
-            -keypass akashvani2026 \
-            -alias akashvani \
-            -keyalg RSA \
-            -keysize 2048 \
-            -validity 10000 \
-            -dname "CN=Akashvani Malayalam, OU=Broadcast, O=Akashvani, L=Kochi, ST=Kerala, C=IN"
+          KEYSTORE_PATH="android/app/akashvani-release.jks"
+          if [ -n "${{ secrets.KEYSTORE_BASE64 }}" ]; then
+            echo "Restoring signing keystore from GitHub Secret..."
+            echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > "$KEYSTORE_PATH"
+          elif [ -f "$KEYSTORE_PATH" ]; then
+            echo "Using permanent committed signing keystore at $KEYSTORE_PATH (same signature -> in-place updates work!)"
+          else
+            echo "Keystore missing; generating fallback keystore..."
+            keytool -genkeypair -v \
+              -keystore "$KEYSTORE_PATH" \
+              -storepass akashvani2026 \
+              -keypass akashvani2026 \
+              -alias akashvani \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -dname "CN=Akashvani Malayalam Radio, OU=Broadcast, O=Akashvani, L=Kochi, ST=Kerala, C=IN"
+          fi
+          ls -lh "$KEYSTORE_PATH"
 
       - name: Inject repository stations.json URL for remote updates
         run: |
@@ -68,6 +78,7 @@ jobs:
         run: |
           gradle assembleRelease --no-daemon \
             -PremoteStationsUrl="${REMOTE_STATIONS_URL}" \
+            -PgithubRepo="${{ github.repository }}" \
             -PversionCode="${{ github.run_number }}" \
             -PversionName="1.0.${{ github.run_number }}"
 
@@ -84,9 +95,10 @@ jobs:
             'Akashvani — Live Malayalam Radio (Android APK)' \
             '==============================================' \
             '1. Unzip this file on your Android phone (Files app -> Extract).' \
-            "2. Tap $APK_NAME to install." \
-            '3. If Android asks for permission to install from your browser/Files app, tap Allow once.' \
-            '4. Open Akashvani, tap the huge Play button, and enjoy live Malayalam Akashvani streams!' \
+            "2. Tap $APK_NAME to install or update." \
+            '3. Signed with a permanent key: future versions will simply show "Update" (no uninstall needed!).' \
+            '4. If Android asks for permission to install from your browser/Files app, tap Allow once.' \
+            '5. Open Akashvani, tap the huge Play button, and enjoy live Malayalam radio!' \
             > release-dist/HOW-TO-INSTALL.txt
 
           (cd release-dist && zip -9 "$ZIP_NAME" "$APK_NAME" "HOW-TO-INSTALL.txt")
@@ -102,10 +114,10 @@ jobs:
             ${{ inputs.release_notes || 'Built automatically via GitHub Actions.' }}
 
             **Included in this ZIP:**
-            - `Akashvani-v1.0.${{ github.run_number }}.apk` (release-signed, ready to install on Android 7.0+)
-            - Background & lock-screen playback with official Akashvani stream headers
-            - Huge Play/Pause button, live rewind seeking (-15s / +15s / Live), auto-reconnect, and sleep timer
-            - Automatic remote station list sync from `stations.json` in this repository
+            - `Akashvani-v1.0.${{ github.run_number }}.apk` (permanently signed for in-place updates on Android 7.0+)
+            - Exact offline & stream-failure diagnosis, automatic backup link switching, and auto-resume when internet returns
+            - Locked normal font scaling (unaffected by large system fonts), Akashvani Kerala default #1, and all Kerala FM stations
+            - Automatic remote station list sync from `stations.json` & in-app update alerts
           files: |
             release-dist/Akashvani-v1.0.${{ github.run_number }}-android-apk.zip
           draft: false

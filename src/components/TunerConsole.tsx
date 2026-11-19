@@ -1,16 +1,19 @@
 import {
+  AlertCircle,
   Loader2,
   Moon,
   Pause,
   Play,
   Radio,
+  RefreshCw,
   RotateCcw,
   RotateCw,
   Star,
   Volume2,
   VolumeX,
+  WifiOff,
 } from 'lucide-react';
-import type { PlaybackStatus, RadioStation, SeekState } from '../types/radio';
+import type { PlaybackErrorInfo, PlaybackStatus, RadioStation, SeekState } from '../types/radio';
 import { formatDuration, formatSeekOffset } from '../utils/radioLogic';
 
 interface TunerConsoleProps {
@@ -18,7 +21,9 @@ interface TunerConsoleProps {
   stationIndex: number;
   totalStations: number;
   status: PlaybackStatus;
-  errorMessage: string | null;
+  errorInfo: PlaybackErrorInfo | null;
+  isOnline: boolean;
+  usingFallback: boolean;
   volume: number;
   isMuted: boolean;
   seekState: SeekState;
@@ -28,6 +33,7 @@ interface TunerConsoleProps {
   isFavorite: boolean;
   onToggleFavorite: (stationId: string) => void;
   onTogglePlayPause: () => void;
+  onRetry: () => void;
   onSeekBy: (deltaSeconds: number) => void;
   onSeekToOffsetFromEnd: (secondsBehindLive: number) => void;
   onJumpToLive: () => void;
@@ -50,7 +56,9 @@ export function TunerConsole({
   stationIndex,
   totalStations,
   status,
-  errorMessage,
+  errorInfo,
+  isOnline,
+  usingFallback,
   volume,
   isMuted,
   seekState,
@@ -60,6 +68,7 @@ export function TunerConsole({
   isFavorite,
   onToggleFavorite,
   onTogglePlayPause,
+  onRetry,
   onSeekBy,
   onSeekToOffsetFromEnd,
   onJumpToLive,
@@ -72,17 +81,26 @@ export function TunerConsole({
   const isBusy = status === 'loading' || status === 'reconnecting';
 
   const statusLabel = (() => {
+    if (!isOnline) {
+      return 'No internet connection';
+    }
     switch (status) {
       case 'playing':
-        return seekState.isAtLiveEdge ? 'On Air · Live' : 'Playing · Time-shifted';
+        return seekState.isAtLiveEdge
+          ? usingFallback
+            ? 'On Air · Backup Stream'
+            : 'On Air · Live'
+          : 'Playing · Time-shifted';
       case 'loading':
-        return 'Connecting to Akashvani...';
+        return usingFallback ? 'Switching to backup link...' : `Connecting to ${station.name}...`;
       case 'reconnecting':
-        return `Reconnecting (attempt ${reconnectCount})...`;
+        return reconnectCount > 0
+          ? `Reconnecting (try ${reconnectCount} of 3)...`
+          : 'Trying backup stream...';
       case 'paused':
         return 'Paused';
       case 'error':
-        return 'Station unavailable';
+        return errorInfo?.title ?? 'Station unavailable';
       default:
         return 'Ready to tune';
     }
@@ -270,9 +288,11 @@ export function TunerConsole({
         <div className="w-full max-w-lg">
           <div className="flex items-center justify-between text-xs font-mono tabular-nums mb-2">
             <span className="text-[#5A6070]">
-              {seekState.canSeek
-                ? `Rewind window ${formatDuration(seekState.bufferSeconds)}`
-                : 'Press Play to build live rewind buffer'}
+              {!seekState.isHlsStream
+                ? 'Continuous live FM broadcast'
+                : seekState.canSeek
+                  ? `Rewind window ${formatDuration(seekState.bufferSeconds)}`
+                  : 'Press Play to build live rewind buffer'}
             </span>
             <div className="flex items-center gap-3">
               <span
@@ -316,26 +336,61 @@ export function TunerConsole({
           />
 
           <p className="mt-2 text-xs text-[#646B7A]">
-            Live radio starts with ~50 seconds of rewind and keeps up to 5 minutes as you listen.
+            {seekState.isHlsStream
+              ? 'Akashvani streams start with ~50 seconds of rewind and keep up to 5 minutes as you listen.'
+              : 'This FM station streams live audio continuously (rewind is available on Akashvani & HLS stations).'}
           </p>
         </div>
       </div>
 
-      {/* Honest Error / Overnight Off-Air Notice */}
-      {errorMessage && (
+      {/* Honest Offline / Exact Failure Diagnosis Card */}
+      {(!isOnline || errorInfo) && (
         <div
           role="alert"
-          className="rounded-2xl border border-[#C8232C]/25 bg-[#FDF4F4] p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+          data-testid="playback-error-banner"
+          data-error-code={!isOnline ? 'offline' : errorInfo?.code}
+          className="rounded-2xl border border-[#C8232C]/25 bg-[#FDF4F4] p-4 flex flex-col gap-3"
         >
-          <p className="text-sm text-[#7F1D1D]">{errorMessage}</p>
-          {station.id !== 'akashvani-kerala' && (
-            <button
-              type="button"
-              onClick={onSwitchToPrimary24x7}
-              className="px-3.5 py-2 text-xs font-semibold text-white bg-[#C8232C] hover:bg-[#B11D25] rounded-lg whitespace-nowrap shrink-0 cursor-pointer"
-            >
-              Tune Akashvani Kerala (24x7)
-            </button>
+          <div className="flex items-start gap-3">
+            {!isOnline || errorInfo?.code === 'offline' ? (
+              <WifiOff className="w-5 h-5 text-[#C8232C] shrink-0 mt-0.5" aria-hidden="true" />
+            ) : (
+              <AlertCircle className="w-5 h-5 text-[#C8232C] shrink-0 mt-0.5" aria-hidden="true" />
+            )}
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-[#7F1D1D]">
+                {!isOnline
+                  ? 'No internet connection'
+                  : (errorInfo?.title ?? 'Station unavailable')}
+              </p>
+              <p className="mt-0.5 text-sm text-[#7F1D1D]/90 leading-relaxed">
+                {!isOnline
+                  ? 'Check your Wi-Fi or mobile data. Playback will start again automatically as soon as your internet returns.'
+                  : errorInfo?.detail}
+              </p>
+            </div>
+          </div>
+
+          {isOnline && (
+            <div className="flex flex-wrap items-center gap-2 pl-8">
+              <button
+                type="button"
+                onClick={onRetry}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 min-h-[38px] text-xs font-semibold text-[#111318] bg-white hover:bg-[#F6F7F9] border border-[#E2E5EB] rounded-lg whitespace-nowrap shrink-0 cursor-pointer"
+              >
+                <RefreshCw className="w-3.5 h-3.5" aria-hidden="true" />
+                <span>Try Again</span>
+              </button>
+              {station.id !== 'akashvani-kerala' && (
+                <button
+                  type="button"
+                  onClick={onSwitchToPrimary24x7}
+                  className="px-3.5 py-2 min-h-[38px] text-xs font-semibold text-white bg-[#C8232C] hover:bg-[#B11D25] rounded-lg whitespace-nowrap shrink-0 cursor-pointer"
+                >
+                  Tune Akashvani Kerala (24x7)
+                </button>
+              )}
+            </div>
           )}
         </div>
       )}

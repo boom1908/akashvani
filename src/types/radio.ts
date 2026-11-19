@@ -1,5 +1,7 @@
 export type StationBand = 'MW' | 'FM';
 
+export type StationCategory = 'akashvani' | 'kerala-fm';
+
 export type StationSchedule = '24x7' | 'daytime';
 
 export interface RadioStation {
@@ -8,6 +10,7 @@ export interface RadioStation {
   malayalamName: string;
   city: string;
   band: StationBand;
+  category: StationCategory;
   frequency: string;
   schedule: StationSchedule;
   description: string;
@@ -29,7 +32,7 @@ export type PlaybackStatus =
   | 'reconnecting'
   | 'error';
 
-export type BandFilter = 'ALL' | 'MW' | 'FM' | 'FAVORITES';
+export type StationFilter = 'ALL' | 'AKASHVANI' | 'KERALA_FM' | 'FAVORITES';
 
 export interface SeekState {
   /** Total seekable duration currently buffered in seconds (e.g. 50s -> 300s) */
@@ -40,4 +43,24 @@ export interface SeekState {
   isAtLiveEdge: boolean;
   /** True once HLS manifest provides seekable timeline */
   canSeek: boolean;
+  /** True for HLS streams that support live rewind, false for continuous MP3/AAC streams */
+  isHlsStream: boolean;
+}
+
+export type PlaybackErrorCode =
+  | 'offline'
+  | 'daytime_off_air'
+  | 'not_found'
+  | 'blocked'
+  | 'timeout'
+  | 'server_error'
+  | 'stalled'
+  | 'unsupported'
+  | 'unknown';
+
+export interface PlaybackErrorInfo {
+  code: PlaybackErrorCode;
+  title: string;
+  detail: string;
+  httpStatus?: number;
 }

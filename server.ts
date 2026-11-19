@@ -1,10 +1,12 @@
 import express from 'express';
 import fs from 'fs';
 import path from 'path';
+import { Readable } from 'stream';
+import type { ReadableStream as WebReadableStream } from 'stream/web';
 import { fileURLToPath } from 'url';
 import JSZip from 'jszip';
 import { createServer as createViteServer } from 'vite';
-import { isAllowedBroadcastHost, rewriteHlsPlaylist } from './src/utils/radioLogic.ts';
+import { isAllowedBroadcastHost, isHlsUrl, rewriteHlsPlaylist } from './src/utils/radioLogic.ts';
 import type { StationCatalog } from './src/types/radio.ts';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -42,12 +44,31 @@ async function probeUrl(url: string, timeoutMs = 3500): Promise<boolean> {
       redirect: 'follow',
     });
     if (!res.ok) return false;
-    const text = await res.text();
-    return text.includes('#EXTM3U');
+    const ct = (res.headers.get('content-type') || '').toLowerCase();
+
+    if (isHlsUrl(url) || ct.includes('mpegurl')) {
+      const text = await res.text();
+      return text.includes('#EXTM3U');
+    }
+
+    // Continuous MP3/AAC/OGG stream: read a tiny chunk and close immediately
+    if (res.body) {
+      const reader = res.body.getReader();
+      try {
+        const { value } = await reader.read();
+        await reader.cancel();
+        return Boolean(value && value.length > 0);
+      } catch {
+        return false;
+      }
+    }
+
+    return ct.includes('audio') || ct.includes('ogg') || ct.includes('octet-stream');
   } catch {
     return false;
   } finally {
     clearTimeout(timer);
+    controller.abort();
   }
 }
 
@@ -55,7 +76,7 @@ function addDirectoryToZip(zip: JSZip, fsDir: string, zipBasePath: string): void
   if (!fs.existsSync(fsDir)) return;
   const entries = fs.readdirSync(fsDir, { withFileTypes: true });
   for (const entry of entries) {
-    if (entry.name === 'build' || entry.name === '.gradle' || entry.name.endsWith('.jks')) {
+    if (entry.name === 'build' || entry.name === '.gradle') {
       continue;
     }
     const fullPath = path.join(fsDir, entry.name);
@@ -77,7 +98,7 @@ async function startServer() {
       const catalog = readStationsCatalog();
       res.setHeader('Cache-Control', 'no-cache');
       res.json(catalog);
-    } catch (err) {
+    } catch {
       res.status(500).json({ error: 'Unable to load station catalog' });
     }
   });
@@ -123,7 +144,15 @@ async function startServer() {
     }
 
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 12_000);
+    let timedOut = false;
+    const connectTimer = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, 12_000);
+
+    req.on('close', () => {
+      controller.abort();
+    });
 
     try {
       const upstream = await fetch(rawUrl, {
@@ -131,16 +160,18 @@ async function startServer() {
         signal: controller.signal,
         redirect: 'follow',
       });
+      clearTimeout(connectTimer);
 
       if (!upstream.ok) {
+        res.setHeader('X-Stream-Error-Reason', 'upstream_http');
+        res.setHeader('X-Stream-Upstream-Status', String(upstream.status));
         res.status(upstream.status).send(`Upstream broadcast returned ${upstream.status}`);
         return;
       }
 
       const contentType = upstream.headers.get('content-type') || '';
       const isPlaylist =
-        rawUrl.toLowerCase().includes('.m3u8') ||
-        contentType.toLowerCase().includes('mpegurl');
+        isHlsUrl(rawUrl) || contentType.toLowerCase().includes('mpegurl');
 
       if (isPlaylist) {
         const manifestText = await upstream.text();
@@ -152,15 +183,34 @@ async function startServer() {
         return;
       }
 
-      const buffer = Buffer.from(await upstream.arrayBuffer());
-      res.setHeader('Content-Type', contentType || 'audio/mp2t');
-      res.setHeader('Cache-Control', 'public, max-age=15');
+      res.setHeader('Content-Type', contentType || 'audio/mpeg');
+      res.setHeader('Cache-Control', 'no-cache');
       res.setHeader('Access-Control-Allow-Origin', '*');
-      res.status(200).send(buffer);
-    } catch (err) {
-      res.status(502).send('Unable to reach Akashvani broadcast server');
-    } finally {
-      clearTimeout(timer);
+      res.status(200);
+
+      if (upstream.body) {
+        const nodeStream = Readable.fromWeb(upstream.body as unknown as WebReadableStream);
+        nodeStream.on('error', () => {
+          if (!res.writableEnded) res.end();
+        });
+        nodeStream.pipe(res);
+      } else {
+        const buffer = Buffer.from(await upstream.arrayBuffer());
+        res.send(buffer);
+      }
+    } catch {
+      clearTimeout(connectTimer);
+      if (!res.headersSent) {
+        if (timedOut) {
+          res.setHeader('X-Stream-Error-Reason', 'timeout');
+          res.status(504).send('Broadcast server timed out');
+        } else {
+          res.setHeader('X-Stream-Error-Reason', 'network_error');
+          res.status(502).send('Unable to reach broadcast server');
+        }
+      } else if (!res.writableEnded) {
+        res.end();
+      }
     }
   });
 

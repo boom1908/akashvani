@@ -1,4 +1,4 @@
-import type { BandFilter, RadioStation } from '../types/radio';
+import type { RadioStation, StationFilter } from '../types/radio';
 
 /**
  * Formats seconds behind the live edge into a clear radio timecode.
@@ -41,6 +41,13 @@ export function clampSeekTarget(
 }
 
 /**
+ * Returns true if the URL points to an HLS (.m3u8) playlist stream.
+ */
+export function isHlsUrl(url: string): boolean {
+  return /\.m3u8(\?|$)/i.test(url);
+}
+
+/**
  * Computes current India Standard Time (UTC+5:30) hours and minutes.
  */
 export function getKeralaIstTime(nowUtc: Date = new Date()): {
@@ -72,11 +79,11 @@ export function isKeralaDaytimeStationOnAir(nowUtc: Date = new Date()): boolean 
 }
 
 /**
- * Filters stations by band/favorites and optional text search.
+ * Filters stations by category/favorites and optional text search.
  */
 export function filterStations(
   stations: RadioStation[],
-  band: BandFilter,
+  filter: StationFilter,
   query: string,
   favoriteIds: string[]
 ): RadioStation[] {
@@ -84,16 +91,19 @@ export function filterStations(
   const favSet = new Set(favoriteIds);
 
   return stations.filter((station) => {
-    if (band === 'FAVORITES' && !favSet.has(station.id)) {
+    if (filter === 'FAVORITES' && !favSet.has(station.id)) {
       return false;
     }
-    if ((band === 'MW' || band === 'FM') && station.band !== band) {
+    if (filter === 'AKASHVANI' && station.category !== 'akashvani') {
+      return false;
+    }
+    if (filter === 'KERALA_FM' && station.category !== 'kerala-fm') {
       return false;
     }
     if (!normalizedQuery) {
       return true;
     }
-    const haystack = `${station.name} ${station.malayalamName} ${station.city} ${station.frequency} ${station.description}`.toLowerCase();
+    const haystack = `${station.name} ${station.malayalamName} ${station.city} ${station.frequency} ${station.band} ${station.description}`.toLowerCase();
     return haystack.includes(normalizedQuery);
   });
 }
@@ -115,7 +125,7 @@ export function getNextStreamUrl(
 }
 
 /**
- * Validates that a proxied stream URL belongs to an allowed Akashvani/Prasar Bharati CDN host.
+ * Validates that a proxied stream URL belongs to an allowed Akashvani or verified Kerala FM host.
  */
 export function isAllowedBroadcastHost(rawUrl: string): boolean {
   try {
@@ -125,6 +135,7 @@ export function isAllowedBroadcastHost(rawUrl: string): boolean {
     }
     const host = parsed.hostname.toLowerCase();
     const allowedSuffixes = [
+      // Prasar Bharati / Akashvani CDNs
       'wavespb.com',
       'bitgravity.com',
       'cloudfront.net',
@@ -132,6 +143,17 @@ export function isAllowedBroadcastHost(rawUrl: string): boolean {
       'prasarbharati.gov.in',
       'akashvani.gov.in',
       'newsonair.gov.in',
+      // Verified Kerala & Malayalam FM radio hosts
+      'radiomango.ai',
+      'streamtheworld.com',
+      'tritondigital.com',
+      'my-control-panel.com',
+      'autopo.st',
+      'securenetsystems.net',
+      'zeno.fm',
+      'zenomedia.com',
+      'digitalmalayali.in',
+      'qfmradio.qa',
     ];
     return allowedSuffixes.some((suffix) => host === suffix || host.endsWith(`.${suffix}`));
   } catch {
@@ -159,7 +181,6 @@ export function rewriteHlsPlaylist(
       const trimmed = line.trim();
       if (!trimmed) return line;
 
-      // Rewrite URI="..." attributes inside HLS tags (e.g. EXT-X-KEY, EXT-X-MEDIA, EXT-X-MAP)
       if (trimmed.startsWith('#')) {
         if (trimmed.includes('URI="')) {
           return line.replace(/URI="([^"]+)"/g, (_match, uri: string) => {
@@ -169,8 +190,109 @@ export function rewriteHlsPlaylist(
         return line;
       }
 
-      // Non-comment line is a playlist or segment URL
       return wrapUrl(trimmed);
     })
     .join('\n');
+}
+
+export interface FailureDiagnosisInput {
+  station: RadioStation;
+  isOnline: boolean;
+  httpStatus?: number | null;
+  reason?: 'timeout' | 'stalled' | 'unsupported' | 'network' | 'unknown';
+  nowUtc?: Date;
+}
+
+/**
+ * Translates network status, HTTP codes, and Kerala IST broadcast schedules into
+ * a clear, honest plain-English diagnosis for listeners.
+ */
+export function classifyPlaybackFailure({
+  station,
+  isOnline,
+  httpStatus,
+  reason = 'unknown',
+  nowUtc = new Date(),
+}: FailureDiagnosisInput): import('../types/radio').PlaybackErrorInfo {
+  if (!isOnline) {
+    return {
+      code: 'offline',
+      title: 'No internet connection',
+      detail:
+        'Check your Wi-Fi or mobile data. Playback will start again automatically as soon as your internet returns.',
+    };
+  }
+
+  if (reason === 'unsupported') {
+    return {
+      code: 'unsupported',
+      title: 'Browser cannot play this stream',
+      detail: 'Try opening this page in Chrome, Safari, or Edge, or use the Android app.',
+    };
+  }
+
+  const daytimeOffAirNow =
+    station.schedule === 'daytime' && !isKeralaDaytimeStationOnAir(nowUtc);
+
+  if (daytimeOffAirNow && httpStatus !== 403 && httpStatus !== 401) {
+    const { formatted } = getKeralaIstTime(nowUtc);
+    return {
+      code: 'daytime_off_air',
+      title: `${station.name} is off air right now`,
+      detail: `This regional station only broadcasts 5:55 AM – 11:00 PM IST (it is currently ${formatted}). Switch to Akashvani Kerala for 24-hour live radio.`,
+      httpStatus: httpStatus ?? undefined,
+    };
+  }
+
+  if (httpStatus === 401 || httpStatus === 403) {
+    return {
+      code: 'blocked',
+      title: `Broadcast server blocked this link (Error ${httpStatus})`,
+      detail: `${station.name}'s server rejected the connection. You can try another station while the link is updated.`,
+      httpStatus,
+    };
+  }
+
+  if (httpStatus === 404 || httpStatus === 410) {
+    return {
+      code: 'not_found',
+      title: `Stream link is currently offline or moved (Error ${httpStatus})`,
+      detail: `${station.name} is not airing on this link right now. Try again later or switch to Akashvani Kerala.`,
+      httpStatus,
+    };
+  }
+
+  if (httpStatus === 504 || reason === 'timeout') {
+    return {
+      code: 'timeout',
+      title: 'Slow connection — server did not reply in time',
+      detail: `Connecting to ${station.name} timed out. Your signal may be weak or the broadcast server is busy.`,
+      httpStatus: httpStatus ?? undefined,
+    };
+  }
+
+  if (httpStatus && httpStatus >= 500) {
+    return {
+      code: 'server_error',
+      title: `Broadcast server is temporarily down (Error ${httpStatus})`,
+      detail: `${station.name}'s server is having a temporary problem. Wait a minute and tap Try Again.`,
+      httpStatus,
+    };
+  }
+
+  if (reason === 'stalled') {
+    return {
+      code: 'stalled',
+      title: 'Broadcast stopped sending audio',
+      detail: `${station.name} froze for 15 seconds without sending sound. Tap Try Again or pick another station.`,
+    };
+  }
+
+  return {
+    code: 'unknown',
+    title: `Could not connect to ${station.name}`,
+    detail:
+      'The station server could not be reached right now. Check your internet signal, tap Try Again, or switch to Akashvani Kerala.',
+    httpStatus: httpStatus ?? undefined,
+  };
 }

@@ -2,12 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   clampSeekTarget,
+  classifyPlaybackFailure,
   filterStations,
   formatDuration,
   formatSeekOffset,
   getKeralaIstTime,
   getNextStreamUrl,
   isAllowedBroadcastHost,
+  isHlsUrl,
   isKeralaDaytimeStationOnAir,
   rewriteHlsPlaylist,
 } from './radioLogic';
@@ -20,6 +22,7 @@ const SAMPLE_STATIONS: RadioStation[] = [
     malayalamName: 'ആകാശവാണി കേരളം',
     city: 'Thiruvananthapuram / Alappuzha',
     band: 'MW',
+    category: 'akashvani',
     frequency: '576 kHz',
     schedule: '24x7',
     description: 'Primary MW service',
@@ -27,15 +30,29 @@ const SAMPLE_STATIONS: RadioStation[] = [
     fallbackUrls: ['https://air.pc.cdn.bitgravity.com/air/live/pbaudio230/playlist.m3u8'],
   },
   {
-    id: 'kochi',
-    name: 'Akashvani Kochi',
-    malayalamName: 'ആകാശവാണി കൊച്ചി',
+    id: 'mango',
+    name: 'Radio Mango 91.9',
+    malayalamName: 'റേഡിയോ മാംഗോ',
     city: 'Kochi',
     band: 'FM',
-    frequency: '102.3 MHz',
+    category: 'kerala-fm',
+    frequency: '91.9 MHz',
     schedule: '24x7',
-    description: 'Central Kerala FM',
-    streamUrl: 'https://radio.wavespb.com/live/kochi.m3u8',
+    description: 'Kerala FM',
+    streamUrl: 'https://stream.radiomango.ai/listen/radio_mango_ai/radio.mp3',
+    fallbackUrls: [],
+  },
+  {
+    id: 'thrissur',
+    name: 'Akashvani Thrissur',
+    malayalamName: 'ആകാശവാണി തൃശ്ശൂർ',
+    city: 'Thrissur',
+    band: 'MW',
+    category: 'akashvani',
+    frequency: '630 kHz',
+    schedule: 'daytime',
+    description: 'Daytime MW service',
+    streamUrl: 'https://radio.wavespb.com/live/thrissur.m3u8',
     fallbackUrls: [],
   },
 ];
@@ -60,22 +77,27 @@ test('clampSeekTarget stays strictly within seekable live window', () => {
   assert.equal(clampSeekTarget(105, 15, 60, 110), 110);
 });
 
+test('isHlsUrl distinguishes .m3u8 playlists from direct MP3/AAC streams', () => {
+  assert.equal(isHlsUrl('https://radio.wavespb.com/live/abc/abc.m3u8'), true);
+  assert.equal(isHlsUrl('https://d3caeelfr0kslf.cloudfront.net/radiokochi.m3u8?token=1'), true);
+  assert.equal(isHlsUrl('https://stream.radiomango.ai/listen/radio_mango_ai/radio.mp3'), false);
+  assert.equal(isHlsUrl('https://cast1.my-control-panel.com/proxy/radiomattoli/stream'), false);
+});
+
 test('IST clock & daytime station schedule checks work accurately', () => {
-  // 02:30 UTC = 08:00 AM IST -> Daytime stations ON AIR
   const morningUtc = new Date('2026-11-18T02:30:00Z');
   assert.equal(getKeralaIstTime(morningUtc).formatted, '8:00 AM IST');
   assert.equal(isKeralaDaytimeStationOnAir(morningUtc), true);
 
-  // 20:30 UTC = 02:00 AM IST -> Daytime stations OFF AIR overnight
   const nightUtc = new Date('2026-11-18T20:30:00Z');
   assert.equal(getKeralaIstTime(nightUtc).formatted, '2:00 AM IST');
   assert.equal(isKeralaDaytimeStationOnAir(nightUtc), false);
 });
 
-test('filterStations filters by band, favorites, and search query', () => {
-  assert.equal(filterStations(SAMPLE_STATIONS, 'MW', '', []).length, 1);
-  assert.equal(filterStations(SAMPLE_STATIONS, 'FM', '', []).length, 1);
-  assert.equal(filterStations(SAMPLE_STATIONS, 'FAVORITES', '', ['kochi']).length, 1);
+test('filterStations filters by Akashvani, Kerala FM, favorites, and search query', () => {
+  assert.equal(filterStations(SAMPLE_STATIONS, 'AKASHVANI', '', []).length, 2);
+  assert.equal(filterStations(SAMPLE_STATIONS, 'KERALA_FM', '', []).length, 1);
+  assert.equal(filterStations(SAMPLE_STATIONS, 'FAVORITES', '', ['mango']).length, 1);
   assert.equal(filterStations(SAMPLE_STATIONS, 'ALL', 'alappuzha', []).length, 1);
   assert.equal(filterStations(SAMPLE_STATIONS, 'ALL', 'unknown', []).length, 0);
 });
@@ -93,10 +115,11 @@ test('getNextStreamUrl falls back to backup streams in order', () => {
   assert.equal(getNextStreamUrl(SAMPLE_STATIONS[0], tried), null);
 });
 
-test('isAllowedBroadcastHost permits Prasar Bharati CDNs and rejects arbitrary hosts', () => {
+test('isAllowedBroadcastHost permits Akashvani and verified Kerala FM hosts and rejects others', () => {
   assert.equal(isAllowedBroadcastHost('https://radio.wavespb.com/live/abc/abc.m3u8'), true);
-  assert.equal(isAllowedBroadcastHost('https://air.pc.cdn.bitgravity.com/air/live/pbaudio229/playlist.m3u8'), true);
-  assert.equal(isAllowedBroadcastHost('https://d3r9rhourdc02u.cloudfront.net/assets/radio/a.m3u8'), true);
+  assert.equal(isAllowedBroadcastHost('https://stream.radiomango.ai/listen/radio_mango_ai/radio.mp3'), true);
+  assert.equal(isAllowedBroadcastHost('https://cast1.my-control-panel.com/proxy/radiomattoli/stream'), true);
+  assert.equal(isAllowedBroadcastHost('https://stream.zeno.fm/anrf216cu68uv'), true);
   assert.equal(isAllowedBroadcastHost('http://127.0.0.1:8080/secret'), false);
   assert.equal(isAllowedBroadcastHost('https://evil.example.com/stream.m3u8'), false);
 });
@@ -115,4 +138,51 @@ test('rewriteHlsPlaylist rewrites relative segments and tag URIs to local proxy'
   assert.match(rewritten, /URI="\/api\/stream-proxy\?url=https%3A%2F%2Fradio\.wavespb\.com%2Flive%2Fabc%2Fkey\.bin"/);
   assert.match(rewritten, /^\/api\/stream-proxy\?url=https%3A%2F%2Fradio\.wavespb\.com%2Flive%2Fabc%2Fchunk_001\.ts$/m);
   assert.match(rewritten, /^\/api\/stream-proxy\?url=https%3A%2F%2Fradio\.wavespb\.com%2Flive%2Fabc%2Fchunk_002\.ts$/m);
+});
+
+test('classifyPlaybackFailure pinpoints exact failure reasons accurately', () => {
+  const kerala = SAMPLE_STATIONS[0];
+  const thrissur = SAMPLE_STATIONS[2];
+  const nightUtc = new Date('2026-11-18T20:30:00Z'); // 2:00 AM IST
+  const morningUtc = new Date('2026-11-18T04:30:00Z'); // 10:00 AM IST
+
+  // 1. Offline always wins
+  const offline = classifyPlaybackFailure({ station: kerala, isOnline: false, httpStatus: 404 });
+  assert.equal(offline.code, 'offline');
+  assert.match(offline.title, /No internet/i);
+
+  // 2. Daytime station at 2 AM IST => off air overnight
+  const offAir = classifyPlaybackFailure({
+    station: thrissur,
+    isOnline: true,
+    httpStatus: 404,
+    nowUtc: nightUtc,
+  });
+  assert.equal(offAir.code, 'daytime_off_air');
+  assert.match(offAir.detail, /2:00 AM IST/);
+
+  // 3. Daytime station at 10 AM IST with 404 => link offline/moved, NOT overnight off-air
+  const dayBroken = classifyPlaybackFailure({
+    station: thrissur,
+    isOnline: true,
+    httpStatus: 404,
+    nowUtc: morningUtc,
+  });
+  assert.equal(dayBroken.code, 'not_found');
+
+  // 4. 403 blocked
+  const blocked = classifyPlaybackFailure({ station: kerala, isOnline: true, httpStatus: 403 });
+  assert.equal(blocked.code, 'blocked');
+
+  // 5. 503 server error
+  const serverDown = classifyPlaybackFailure({ station: kerala, isOnline: true, httpStatus: 503 });
+  assert.equal(serverDown.code, 'server_error');
+
+  // 6. 504 / timeout
+  const timedOut = classifyPlaybackFailure({ station: kerala, isOnline: true, httpStatus: 504 });
+  assert.equal(timedOut.code, 'timeout');
+
+  // 7. Buffering stall watchdog
+  const stalled = classifyPlaybackFailure({ station: kerala, isOnline: true, reason: 'stalled' });
+  assert.equal(stalled.code, 'stalled');
 });

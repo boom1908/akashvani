@@ -1,5 +1,5 @@
 import { RefreshCw, Search, Star } from 'lucide-react';
-import type { BandFilter, PlaybackStatus, RadioStation } from '../types/radio';
+import type { PlaybackStatus, RadioStation, StationFilter } from '../types/radio';
 import { filterStations, getKeralaIstTime } from '../utils/radioLogic';
 
 interface StationListProps {
@@ -8,20 +8,20 @@ interface StationListProps {
   playbackStatus: PlaybackStatus;
   liveStatuses: Record<string, 'live' | 'off-air'>;
   isCheckingHealth: boolean;
-  bandFilter: BandFilter;
+  stationFilter: StationFilter;
   searchQuery: string;
   favoriteIds: string[];
-  onBandFilterChange: (band: BandFilter) => void;
+  onStationFilterChange: (filter: StationFilter) => void;
   onSearchChange: (q: string) => void;
   onSelectStation: (station: RadioStation) => void;
   onToggleFavorite: (stationId: string) => void;
   onRefreshHealth: () => void;
 }
 
-const BAND_TABS: { id: BandFilter; label: string }[] = [
+const FILTER_TABS: { id: StationFilter; label: string }[] = [
   { id: 'ALL', label: 'All' },
-  { id: 'MW', label: 'MW' },
-  { id: 'FM', label: 'FM' },
+  { id: 'AKASHVANI', label: 'Akashvani' },
+  { id: 'KERALA_FM', label: 'Kerala FM' },
   { id: 'FAVORITES', label: 'Saved' },
 ];
 
@@ -31,23 +31,23 @@ export function StationList({
   playbackStatus,
   liveStatuses,
   isCheckingHealth,
-  bandFilter,
+  stationFilter,
   searchQuery,
   favoriteIds,
-  onBandFilterChange,
+  onStationFilterChange,
   onSearchChange,
   onSelectStation,
   onToggleFavorite,
   onRefreshHealth,
 }: StationListProps) {
-  const filtered = filterStations(stations, bandFilter, searchQuery, favoriteIds);
+  const filtered = filterStations(stations, stationFilter, searchQuery, favoriteIds);
   const ist = getKeralaIstTime();
   const liveCount = Object.values(liveStatuses).filter((s) => s === 'live').length;
 
   return (
     <aside
       id="stations"
-      aria-label="Kerala Akashvani Stations"
+      aria-label="Kerala Radio Stations"
       className="bg-white border border-[#E2E5EB] rounded-3xl p-5 sm:p-6 flex flex-col h-full"
     >
       {/* Header Row */}
@@ -56,7 +56,7 @@ export function StationList({
           <h2 className="font-display text-xl font-bold text-[#111318]">Kerala Stations</h2>
           <p className="mt-0.5 text-xs text-[#5A6070] font-mono tabular-nums">
             {ist.formatted}
-            {liveCount > 0 ? ` · ${liveCount} on air now` : ''}
+            {liveCount > 0 ? ` · ${liveCount} on air now` : ` · ${stations.length} stations`}
           </p>
         </div>
 
@@ -79,19 +79,19 @@ export function StationList({
       <div className="mt-4 flex flex-col gap-3">
         <div
           role="tablist"
-          aria-label="Filter stations by band"
+          aria-label="Filter stations"
           className="grid grid-cols-4 gap-1 p-1 bg-[#F6F7F9] border border-[#E2E5EB] rounded-xl"
         >
-          {BAND_TABS.map((tab) => {
-            const active = bandFilter === tab.id;
+          {FILTER_TABS.map((tab) => {
+            const active = stationFilter === tab.id;
             return (
               <button
                 key={tab.id}
                 role="tab"
                 type="button"
                 aria-selected={active}
-                onClick={() => onBandFilterChange(tab.id)}
-                className={`py-2 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap cursor-pointer ${
+                onClick={() => onStationFilterChange(tab.id)}
+                className={`py-2 px-1 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap cursor-pointer ${
                   active
                     ? 'bg-white text-[#111318] shadow-xs'
                     : 'text-[#5A6070] hover:text-[#111318]'
@@ -116,7 +116,7 @@ export function StationList({
             type="search"
             value={searchQuery}
             onChange={(e) => onSearchChange(e.target.value)}
-            placeholder="Search Alappuzha, Kochi, Kozhikode..."
+            placeholder="Search Akashvani, Mango, Yesudas, Kochi..."
             className="w-full h-11 pl-10 pr-3.5 text-sm bg-[#F6F7F9] border border-[#E2E5EB] rounded-xl text-[#111318] placeholder:text-[#788092] focus:outline-none focus:border-[#111318] focus:bg-white transition-colors"
           />
         </div>
@@ -128,7 +128,7 @@ export function StationList({
           <div className="py-10 px-4 text-center">
             <p className="text-sm font-medium text-[#111318]">No stations match your filter</p>
             <p className="mt-1 text-xs text-[#5A6070]">
-              {bandFilter === 'FAVORITES'
+              {stationFilter === 'FAVORITES'
                 ? 'Tap the star next to any station to save it here.'
                 : 'Try clearing the search box or switching back to All.'}
             </p>

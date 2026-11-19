@@ -104,12 +104,13 @@ export function AndroidExportSection() {
           <p className="mt-1.5 text-sm font-semibold text-[#111318]">
             Download Akashvani-v1.0.X-android-apk.zip
           </p>
-          <p className="mt-1 text-sm text-[#5A6070] leading-relaxed">
-            Open the Releases section of your repo on your phone, download the ZIP, extract it in
-            your Files app, and tap the APK to install.
-          </p>
+            <p className="mt-1 text-sm text-[#5A6070] leading-relaxed">
+              Open the Releases section of your repo on your phone, download the ZIP, extract it in
+              your Files app, and tap the APK. Every future build updates in place without
+              uninstalling.
+            </p>
+          </div>
         </div>
-      </div>
 
       {showWorkflow && (
         <div className="mt-6 rounded-2xl bg-[#15181F] text-[#E6E9F0] p-4 sm:p-5 overflow-x-auto">

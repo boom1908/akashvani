@@ -1,11 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Hls from 'hls.js';
-import type { PlaybackStatus, RadioStation, SeekState } from '../types/radio';
-import { clampSeekTarget, getNextStreamUrl } from '../utils/radioLogic';
+import type { PlaybackErrorInfo, PlaybackStatus, RadioStation, SeekState } from '../types/radio';
+import {
+  clampSeekTarget,
+  classifyPlaybackFailure,
+  getNextStreamUrl,
+  isHlsUrl,
+} from '../utils/radioLogic';
 
 interface UseRadioPlayerResult {
   status: PlaybackStatus;
-  errorMessage: string | null;
+  errorInfo: PlaybackErrorInfo | null;
+  isOnline: boolean;
+  usingFallback: boolean;
   volume: number;
   isMuted: boolean;
   seekState: SeekState;
@@ -14,6 +21,7 @@ interface UseRadioPlayerResult {
   reconnectCount: number;
   audioLevels: number[];
   playStation: (station: RadioStation) => void;
+  retryCurrentStation: () => void;
   togglePlayPause: (station: RadioStation) => void;
   seekBy: (deltaSeconds: number) => void;
   seekToOffsetFromEnd: (secondsBehindLive: number) => void;
@@ -28,31 +36,132 @@ const DEFAULT_SEEK: SeekState = {
   secondsBehindLive: 0,
   isAtLiveEdge: true,
   canSeek: false,
+  isHlsStream: true,
 };
+
+const STALL_WATCHDOG_MS = 15_000;
+
+interface FailureContext {
+  httpStatus?: number | null;
+  reason?: 'timeout' | 'stalled' | 'unsupported' | 'network' | 'unknown';
+}
 
 export function useRadioPlayer(selectedStation: RadioStation | null): UseRadioPlayerResult {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const hlsRef = useRef<Hls | null>(null);
   const stationRef = useRef<RadioStation | null>(selectedStation);
+  const currentIsHlsRef = useRef<boolean>(true);
+  const loadedStationIdRef = useRef<string | null>(null);
   const triedUrlsRef = useRef<Set<string>>(new Set());
   const reconnectTimerRef = useRef<number | null>(null);
+  const stallTimerRef = useRef<number | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const rafRef = useRef<number | null>(null);
+  const directErrorHandlerRef = useRef<(() => void) | null>(null);
+  const stallTriggerRef = useRef<(() => void) | null>(null);
+  const wasActiveBeforeOfflineRef = useRef<boolean>(false);
+  const loadStreamRef = useRef<((station: RadioStation, url: string, isFallback?: boolean) => void) | null>(null);
 
+  const [isOnline, setIsOnline] = useState<boolean>(() =>
+    typeof navigator !== 'undefined' ? navigator.onLine : true
+  );
   const [status, setStatus] = useState<PlaybackStatus>('idle');
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [errorInfo, setErrorInfo] = useState<PlaybackErrorInfo | null>(null);
+  const [usingFallback, setUsingFallback] = useState<boolean>(false);
   const [volume, setVolumeState] = useState<number>(0.85);
   const [isMuted, setIsMuted] = useState<boolean>(false);
   const [seekState, setSeekState] = useState<SeekState>(DEFAULT_SEEK);
   const [sleepSecondsLeft, setSleepSecondsLeft] = useState<number | null>(null);
   const [activeStreamHost, setActiveStreamHost] = useState<string | null>(null);
   const [reconnectCount, setReconnectCount] = useState<number>(0);
-  const [audioLevels, setAudioLevels] = useState<number[]>([0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1]);
+  const [audioLevels, setAudioLevels] = useState<number[]>([
+    0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1,
+  ]);
+
+  const statusRef = useRef<PlaybackStatus>(status);
+  useEffect(() => {
+    statusRef.current = status;
+  }, [status]);
 
   useEffect(() => {
     stationRef.current = selectedStation;
   }, [selectedStation]);
+
+  const clearTimers = useCallback(() => {
+    if (reconnectTimerRef.current) {
+      window.clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
+    if (stallTimerRef.current) {
+      window.clearTimeout(stallTimerRef.current);
+      stallTimerRef.current = null;
+    }
+  }, []);
+
+  const armStallWatchdog = useCallback(() => {
+    if (stallTimerRef.current) {
+      window.clearTimeout(stallTimerRef.current);
+    }
+    stallTimerRef.current = window.setTimeout(() => {
+      if (statusRef.current === 'loading' || statusRef.current === 'reconnecting') {
+        stallTriggerRef.current?.();
+      }
+    }, STALL_WATCHDOG_MS);
+  }, []);
+
+  const clearStallWatchdog = useCallback(() => {
+    if (stallTimerRef.current) {
+      window.clearTimeout(stallTimerRef.current);
+      stallTimerRef.current = null;
+    }
+  }, []);
+
+  // Real-time online/offline failsafe with automatic resume when internet returns
+  useEffect(() => {
+    const handleOffline = () => {
+      setIsOnline(false);
+      clearTimers();
+      const active =
+        statusRef.current === 'playing' ||
+        statusRef.current === 'loading' ||
+        statusRef.current === 'reconnecting';
+      if (active) {
+        wasActiveBeforeOfflineRef.current = true;
+        audioRef.current?.pause();
+        setStatus('error');
+        if (stationRef.current) {
+          setErrorInfo(
+            classifyPlaybackFailure({
+              station: stationRef.current,
+              isOnline: false,
+            })
+          );
+        }
+      }
+    };
+
+    const handleOnline = () => {
+      setIsOnline(true);
+      if (wasActiveBeforeOfflineRef.current && stationRef.current) {
+        wasActiveBeforeOfflineRef.current = false;
+        triedUrlsRef.current.clear();
+        setReconnectCount(0);
+        setErrorInfo(null);
+        loadStreamRef.current?.(stationRef.current, stationRef.current.streamUrl, false);
+      } else {
+        setErrorInfo((prev) => (prev?.code === 'offline' ? null : prev));
+        setStatus((prev) => (prev === 'error' ? 'idle' : prev));
+      }
+    };
+
+    window.addEventListener('offline', handleOffline);
+    window.addEventListener('online', handleOnline);
+    return () => {
+      window.removeEventListener('offline', handleOffline);
+      window.removeEventListener('online', handleOnline);
+    };
+  }, [clearTimers]);
 
   // Initialize hidden <audio> element once
   useEffect(() => {
@@ -63,34 +172,50 @@ export function useRadioPlayer(selectedStation: RadioStation | null): UseRadioPl
     audioRef.current = audio;
 
     const handlePlaying = () => {
+      clearStallWatchdog();
       setStatus('playing');
-      setErrorMessage(null);
+      setErrorInfo(null);
       setReconnectCount(0);
     };
 
     const handlePause = () => {
+      clearStallWatchdog();
       setStatus((prev) => (prev === 'idle' || prev === 'error' ? prev : 'paused'));
     };
 
     const handleWaiting = () => {
-      setStatus((prev) => (prev === 'playing' ? 'loading' : prev));
+      setStatus((prev) => {
+        if (prev === 'playing') {
+          armStallWatchdog();
+          return 'loading';
+        }
+        return prev;
+      });
+    };
+
+    const handleError = () => {
+      if (!currentIsHlsRef.current && directErrorHandlerRef.current) {
+        directErrorHandlerRef.current();
+      }
     };
 
     audio.addEventListener('playing', handlePlaying);
     audio.addEventListener('pause', handlePause);
     audio.addEventListener('waiting', handleWaiting);
+    audio.addEventListener('error', handleError);
 
     return () => {
       audio.removeEventListener('playing', handlePlaying);
       audio.removeEventListener('pause', handlePause);
       audio.removeEventListener('waiting', handleWaiting);
-      if (reconnectTimerRef.current) window.clearTimeout(reconnectTimerRef.current);
+      audio.removeEventListener('error', handleError);
+      clearTimers();
       if (rafRef.current) window.cancelAnimationFrame(rafRef.current);
       hlsRef.current?.destroy();
       audio.pause();
       audio.src = '';
     };
-  }, []);
+  }, [armStallWatchdog, clearStallWatchdog, clearTimers]);
 
   // Sync volume & mute to audio element
   useEffect(() => {
@@ -104,7 +229,8 @@ export function useRadioPlayer(selectedStation: RadioStation | null): UseRadioPl
     if (!audio || analyserRef.current) return;
     try {
       const AudioContextCtor =
-        window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+        window.AudioContext ||
+        (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
       if (!AudioContextCtor) return;
       const ctx = new AudioContextCtor();
       const source = ctx.createMediaElementSource(audio);
@@ -143,7 +269,6 @@ export function useRadioPlayer(selectedStation: RadioStation | null): UseRadioPl
           });
           setAudioLevels(next);
         } else {
-          // Gentle cadence if analyser is unavailable
           const next = Array.from({ length: 12 }, (_, idx) => {
             const wave = Math.sin(now / 260 + idx * 0.75) * 0.25 + 0.45;
             return Math.max(0.15, Math.min(0.85, wave));
@@ -160,11 +285,26 @@ export function useRadioPlayer(selectedStation: RadioStation | null): UseRadioPl
     };
   }, [status]);
 
-  // Poll seekable buffer & live offset every 500ms
+  // Poll seekable buffer & live offset every 500ms (for HLS streams)
   useEffect(() => {
     const interval = window.setInterval(() => {
       const audio = audioRef.current;
       if (!audio) return;
+
+      if (!currentIsHlsRef.current) {
+        setSeekState((prev) =>
+          prev.isHlsStream
+            ? {
+                bufferSeconds: 0,
+                secondsBehindLive: 0,
+                isAtLiveEdge: true,
+                canSeek: false,
+                isHlsStream: false,
+              }
+            : prev
+        );
+        return;
+      }
 
       const seekable = audio.seekable;
       if (seekable && seekable.length > 0) {
@@ -177,6 +317,7 @@ export function useRadioPlayer(selectedStation: RadioStation | null): UseRadioPl
           secondsBehindLive: behind,
           isAtLiveEdge: behind <= 4,
           canSeek: span >= 5,
+          isHlsStream: true,
         });
       }
     }, 500);
@@ -209,17 +350,34 @@ export function useRadioPlayer(selectedStation: RadioStation | null): UseRadioPl
   }, [sleepSecondsLeft, volume, isMuted]);
 
   const loadStreamUrl = useCallback(
-    (station: RadioStation, targetUrl: string) => {
+    (station: RadioStation, targetUrl: string, isFallback = false) => {
       const audio = audioRef.current;
       if (!audio) return;
 
-      if (reconnectTimerRef.current) {
-        window.clearTimeout(reconnectTimerRef.current);
-        reconnectTimerRef.current = null;
+      clearTimers();
+
+      const currentlyOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
+      setIsOnline(currentlyOnline);
+      if (!currentlyOnline) {
+        wasActiveBeforeOfflineRef.current = true;
+        hlsRef.current?.destroy();
+        hlsRef.current = null;
+        audio.pause();
+        setStatus('error');
+        setErrorInfo(classifyPlaybackFailure({ station, isOnline: false }));
+        return;
       }
 
       hlsRef.current?.destroy();
       hlsRef.current = null;
+      audio.pause();
+      audio.removeAttribute('src');
+      audio.load();
+
+      const hlsMode = isHlsUrl(targetUrl);
+      currentIsHlsRef.current = hlsMode;
+      loadedStationIdRef.current = station.id;
+      setUsingFallback(isFallback);
 
       triedUrlsRef.current.add(targetUrl);
       try {
@@ -230,28 +388,108 @@ export function useRadioPlayer(selectedStation: RadioStation | null): UseRadioPl
 
       const proxiedUrl = `/api/stream-proxy?url=${encodeURIComponent(targetUrl)}`;
       setStatus('loading');
-      setErrorMessage(null);
-      setSeekState(DEFAULT_SEEK);
+      setErrorInfo(null);
+      setSeekState({
+        ...DEFAULT_SEEK,
+        isHlsStream: hlsMode,
+      });
 
       ensureAnalyser();
       if (audioCtxRef.current?.state === 'suspended') {
         audioCtxRef.current.resume().catch(() => {});
       }
 
-      // Register OS lock-screen / media notification metadata
       if ('mediaSession' in navigator) {
         navigator.mediaSession.metadata = new MediaMetadata({
           title: station.name,
           artist: `${station.city} · ${station.frequency}`,
-          album: 'Akashvani · All India Radio Kerala',
+          album: 'Akashvani · Kerala Live Radio',
         });
+      }
+
+      const handleFatalFailure = (ctx: FailureContext = {}) => {
+        clearStallWatchdog();
+
+        const onlineNow = typeof navigator !== 'undefined' ? navigator.onLine : true;
+        if (!onlineNow) {
+          setIsOnline(false);
+          wasActiveBeforeOfflineRef.current = true;
+          setStatus('error');
+          setErrorInfo(classifyPlaybackFailure({ station, isOnline: false }));
+          return;
+        }
+
+        // 1. Try backup/fallback URLs immediately before showing an error
+        const nextUrl = getNextStreamUrl(station, triedUrlsRef.current);
+        if (nextUrl) {
+          setStatus('reconnecting');
+          loadStreamUrl(station, nextUrl, true);
+          return;
+        }
+
+        // 2. Retry with exponential backoff (up to 3 retries)
+        setReconnectCount((prev) => {
+          const attempt = prev + 1;
+          if (attempt <= 3) {
+            setStatus('reconnecting');
+            const delay = Math.min(attempt * 2500, 8000);
+            reconnectTimerRef.current = window.setTimeout(() => {
+              triedUrlsRef.current.clear();
+              loadStreamUrl(station, station.streamUrl, false);
+            }, delay);
+          } else {
+            setStatus('error');
+            setErrorInfo(
+              classifyPlaybackFailure({
+                station,
+                isOnline: true,
+                httpStatus: ctx.httpStatus,
+                reason: ctx.reason,
+              })
+            );
+          }
+          return attempt;
+        });
+      };
+
+      stallTriggerRef.current = () => {
+        handleFatalFailure({ reason: 'stalled' });
+      };
+      armStallWatchdog();
+
+      // For direct MP3/AAC streams, quickly probe the proxy on error to discover exact HTTP code
+      directErrorHandlerRef.current = () => {
+        const probeController = new AbortController();
+        const probeTimeout = window.setTimeout(() => probeController.abort(), 3500);
+        fetch(proxiedUrl, { signal: probeController.signal })
+          .then((res) => {
+            window.clearTimeout(probeTimeout);
+            const reasonHeader = res.headers.get('X-Stream-Error-Reason');
+            res.body?.cancel().catch(() => {});
+            handleFatalFailure({
+              httpStatus: res.ok ? null : res.status,
+              reason: reasonHeader === 'timeout' ? 'timeout' : 'network',
+            });
+          })
+          .catch(() => {
+            window.clearTimeout(probeTimeout);
+            handleFatalFailure({ reason: 'timeout' });
+          });
+      };
+
+      if (!hlsMode) {
+        audio.src = proxiedUrl;
+        audio.play().catch(() => {
+          clearStallWatchdog();
+          setStatus('paused');
+        });
+        return;
       }
 
       if (Hls.isSupported()) {
         const hls = new Hls({
           enableWorker: true,
           lowLatencyMode: false,
-          // Keep up to 5 minutes of listened broadcast in memory so users can rewind!
           backBufferLength: 300,
           liveSyncDurationCount: 3,
           liveMaxLatencyDurationCount: 6,
@@ -266,6 +504,7 @@ export function useRadioPlayer(selectedStation: RadioStation | null): UseRadioPl
 
         hls.on(Hls.Events.MANIFEST_PARSED, () => {
           audio.play().catch(() => {
+            clearStallWatchdog();
             setStatus('paused');
           });
         });
@@ -278,54 +517,59 @@ export function useRadioPlayer(selectedStation: RadioStation | null): UseRadioPl
             return;
           }
 
-          // Try backup URL first if available
-          const nextUrl = getNextStreamUrl(station, triedUrlsRef.current);
-          if (nextUrl) {
-            setStatus('reconnecting');
-            loadStreamUrl(station, nextUrl);
-            return;
-          }
+          const httpStatus =
+            typeof data.response?.code === 'number' && data.response.code > 0
+              ? data.response.code
+              : null;
+          const isTimeout =
+            data.details === Hls.ErrorDetails.MANIFEST_LOAD_TIMEOUT ||
+            data.details === Hls.ErrorDetails.LEVEL_LOAD_TIMEOUT ||
+            data.details === Hls.ErrorDetails.FRAG_LOAD_TIMEOUT;
 
-          // Otherwise schedule automatic reconnect up to 4 times
-          setReconnectCount((prev) => {
-            const attempt = prev + 1;
-            if (attempt <= 4) {
-              setStatus('reconnecting');
-              const delay = Math.min(attempt * 2500, 10000);
-              reconnectTimerRef.current = window.setTimeout(() => {
-                triedUrlsRef.current.clear();
-                loadStreamUrl(station, station.streamUrl);
-              }, delay);
-            } else {
-              setStatus('error');
-              setErrorMessage(
-                station.schedule === 'daytime'
-                  ? `${station.name} broadcasts 5:55 AM – 11:00 PM IST and appears off-air right now.`
-                  : `Could not connect to ${station.name}. Check your connection or try another Kerala station.`
-              );
-            }
-            return attempt;
+          handleFatalFailure({
+            httpStatus,
+            reason: isTimeout ? 'timeout' : 'network',
           });
         });
       } else if (audio.canPlayType('application/vnd.apple.mpegurl')) {
         audio.src = proxiedUrl;
-        audio.play().catch(() => setStatus('paused'));
+        audio.play().catch(() => {
+          clearStallWatchdog();
+          setStatus('paused');
+        });
       } else {
+        clearStallWatchdog();
         setStatus('error');
-        setErrorMessage('Your browser does not support HLS live radio playback.');
+        setErrorInfo(
+          classifyPlaybackFailure({
+            station,
+            isOnline: true,
+            reason: 'unsupported',
+          })
+        );
       }
     },
-    [ensureAnalyser]
+    [armStallWatchdog, clearStallWatchdog, clearTimers, ensureAnalyser]
   );
+
+  useEffect(() => {
+    loadStreamRef.current = loadStreamUrl;
+  }, [loadStreamUrl]);
 
   const playStation = useCallback(
     (station: RadioStation) => {
+      wasActiveBeforeOfflineRef.current = false;
       triedUrlsRef.current.clear();
       setReconnectCount(0);
-      loadStreamUrl(station, station.streamUrl);
+      loadStreamUrl(station, station.streamUrl, false);
     },
     [loadStreamUrl]
   );
+
+  const retryCurrentStation = useCallback(() => {
+    if (!stationRef.current) return;
+    playStation(stationRef.current);
+  }, [playStation]);
 
   const togglePlayPause = useCallback(
     (station: RadioStation) => {
@@ -333,16 +577,20 @@ export function useRadioPlayer(selectedStation: RadioStation | null): UseRadioPl
       if (!audio) return;
 
       if (status === 'playing' || status === 'loading' || status === 'reconnecting') {
-        if (reconnectTimerRef.current) {
-          window.clearTimeout(reconnectTimerRef.current);
-          reconnectTimerRef.current = null;
-        }
+        wasActiveBeforeOfflineRef.current = false;
+        clearTimers();
         audio.pause();
         setStatus('paused');
         return;
       }
 
-      if (status === 'paused' && hlsRef.current && stationRef.current?.id === station.id) {
+      if (
+        status === 'paused' &&
+        loadedStationIdRef.current === station.id &&
+        currentIsHlsRef.current &&
+        hlsRef.current &&
+        isOnline
+      ) {
         if (audioCtxRef.current?.state === 'suspended') {
           audioCtxRef.current.resume().catch(() => {});
         }
@@ -354,7 +602,7 @@ export function useRadioPlayer(selectedStation: RadioStation | null): UseRadioPl
 
       playStation(station);
     },
-    [status, playStation]
+    [clearTimers, isOnline, status, playStation]
   );
 
   const seekBy = useCallback((deltaSeconds: number) => {
@@ -418,7 +666,9 @@ export function useRadioPlayer(selectedStation: RadioStation | null): UseRadioPl
 
   return {
     status,
-    errorMessage,
+    errorInfo,
+    isOnline,
+    usingFallback,
     volume,
     isMuted,
     seekState,
@@ -427,6 +677,7 @@ export function useRadioPlayer(selectedStation: RadioStation | null): UseRadioPl
     reconnectCount,
     audioLevels,
     playStation,
+    retryCurrentStation,
     togglePlayPause,
     seekBy,
     seekToOffsetFromEnd,

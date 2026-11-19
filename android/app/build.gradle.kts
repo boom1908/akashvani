@@ -6,6 +6,7 @@ plugins {
 
 val remoteStationsUrl: String = (project.findProperty("remoteStationsUrl") as String?)
     ?: "https://raw.githubusercontent.com/codito/akashvani/master/stations.json"
+val githubRepo: String = (project.findProperty("githubRepo") as String?) ?: ""
 val appVersionCode: Int = (project.findProperty("versionCode") as String?)?.toIntOrNull() ?: 1
 val appVersionName: String = (project.findProperty("versionName") as String?) ?: "1.0.0"
 
@@ -21,6 +22,7 @@ android {
         versionName = appVersionName
 
         buildConfigField("String", "REMOTE_STATIONS_URL", "\"$remoteStationsUrl\"")
+        buildConfigField("String", "GITHUB_REPO", "\"$githubRepo\"")
     }
 
     signingConfigs {
