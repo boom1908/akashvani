@@ -162,7 +162,7 @@ export default function App() {
   }, [stations, handleSelectStation]);
 
   return (
-    <div className="min-h-screen flex flex-col bg-[#F6F7F9] text-[#111318]">
+    <div className="min-h-screen flex flex-col bg-[#22252B] text-[#F3F5F8]">
       <Header onNavigate={handleNavigate} />
 
       <main className="flex-1 max-w-6xl w-full mx-auto px-4 sm:px-6 py-6 sm:py-10 flex flex-col gap-8">
@@ -220,8 +220,8 @@ export default function App() {
         <AndroidExportSection />
       </main>
 
-      <footer className="border-t border-[#E2E5EB] py-6 px-4 sm:px-6">
-        <div className="max-w-6xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-2 text-xs text-[#646B7A]">
+      <footer className="border-t border-[#363C47] py-6 px-4 sm:px-6">
+        <div className="max-w-6xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-2 text-xs text-[#8F97A6]">
           <span>Akashvani (ആകാശവാണി) · Live Malayalam Radio Tuner</span>
           <span>Space to Play/Pause · Left/Right arrows to seek ±15s</span>
         </div>

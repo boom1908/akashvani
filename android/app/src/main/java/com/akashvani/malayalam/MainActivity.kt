@@ -12,6 +12,8 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -53,6 +55,7 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
@@ -66,7 +69,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontFamily
@@ -84,14 +92,29 @@ import androidx.media3.session.SessionToken
 import com.google.common.util.concurrent.ListenableFuture
 import kotlinx.coroutines.delay
 
-private val CanvasBg = Color(0xFFF6F7F9)
-private val CardSurface = Color(0xFFFFFFFF)
-private val InkDark = Color(0xFF111318)
-private val InkMuted = Color(0xFF5A6070)
-private val Hairline = Color(0xFFE2E5EB)
-private val AkashvaniRed = Color(0xFFC8232C)
-private val ErrorBg = Color(0xFFFDF4F4)
-private val ErrorText = Color(0xFF7F1D1D)
+// Medium-Dark Monochromatic ("Machined Graphite") Palette
+private val CanvasBg = Color(0xFF22252B)
+private val CardSurface = Color(0xFF2A2E35)
+private val RecessedBg = Color(0xFF1B1E24)
+private val ElevatedBg = Color(0xFF343942)
+private val SelectedBg = Color(0xFF363C47)
+private val InkPrimary = Color(0xFFF3F5F8)
+private val InkSecondary = Color(0xFFA9B0BC)
+private val InkMuted = Color(0xFF88909E)
+private val InkOnLight = Color(0xFF181B20)
+private val Hairline = Color(0xFF3A404B)
+private val HairlineStrong = Color(0xFF5A6272)
+private val TrackInactive = Color(0xFF3E4552)
+
+private val AkashvaniMonoColorScheme = darkColorScheme(
+    primary = InkPrimary,
+    onPrimary = InkOnLight,
+    background = CanvasBg,
+    onBackground = InkPrimary,
+    surface = CardSurface,
+    onSurface = InkPrimary,
+    outline = HairlineStrong
+)
 
 class MainActivity : ComponentActivity() {
 
@@ -126,13 +149,99 @@ class MainActivity : ComponentActivity() {
                     fontScale = 1.0f
                 )
             ) {
-                MaterialTheme {
+                MaterialTheme(colorScheme = AkashvaniMonoColorScheme) {
                     Surface(modifier = Modifier.fillMaxSize(), color = CanvasBg) {
                         AkashvaniAppScreen()
                     }
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun AkashvaniLogoMark(modifier: Modifier = Modifier) {
+    Canvas(modifier = modifier) {
+        val w = size.width
+        val h = size.height
+        val corner = w * 0.25f
+
+        // Graphite emblem plate
+        drawRoundRect(
+            color = Color(0xFF2B3039),
+            cornerRadius = CornerRadius(corner, corner)
+        )
+        drawRoundRect(
+            color = Color(0xFF4D5462),
+            cornerRadius = CornerRadius(corner, corner),
+            style = Stroke(width = w * 0.045f)
+        )
+
+        val cx = w * 0.5f
+        val cy = h * 0.46f
+
+        // Outer broadcast arcs (brushed silver)
+        val outerR = w * 0.30f
+        drawArc(
+            color = Color(0xFF949CA9),
+            startAngle = 140f,
+            sweepAngle = 80f,
+            useCenter = false,
+            topLeft = Offset(cx - outerR, cy - outerR),
+            size = Size(outerR * 2f, outerR * 2f),
+            style = Stroke(width = w * 0.055f, cap = StrokeCap.Round)
+        )
+        drawArc(
+            color = Color(0xFF949CA9),
+            startAngle = -40f,
+            sweepAngle = 80f,
+            useCenter = false,
+            topLeft = Offset(cx - outerR, cy - outerR),
+            size = Size(outerR * 2f, outerR * 2f),
+            style = Stroke(width = w * 0.055f, cap = StrokeCap.Round)
+        )
+
+        // Inner broadcast arcs (crisp alabaster)
+        val innerR = w * 0.19f
+        drawArc(
+            color = InkPrimary,
+            startAngle = 140f,
+            sweepAngle = 80f,
+            useCenter = false,
+            topLeft = Offset(cx - innerR, cy - innerR),
+            size = Size(innerR * 2f, innerR * 2f),
+            style = Stroke(width = w * 0.058f, cap = StrokeCap.Round)
+        )
+        drawArc(
+            color = InkPrimary,
+            startAngle = -40f,
+            sweepAngle = 80f,
+            useCenter = false,
+            topLeft = Offset(cx - innerR, cy - innerR),
+            size = Size(innerR * 2f, innerR * 2f),
+            style = Stroke(width = w * 0.058f, cap = StrokeCap.Round)
+        )
+
+        // Transmitter dot & mast
+        drawCircle(
+            color = InkPrimary,
+            radius = w * 0.075f,
+            center = Offset(cx, cy)
+        )
+        drawLine(
+            color = InkPrimary,
+            start = Offset(cx, cy + w * 0.075f),
+            end = Offset(cx, h * 0.78f),
+            strokeWidth = w * 0.06f,
+            cap = StrokeCap.Round
+        )
+        drawLine(
+            color = InkPrimary,
+            start = Offset(w * 0.38f, h * 0.78f),
+            end = Offset(w * 0.62f, h * 0.78f),
+            strokeWidth = w * 0.06f,
+            cap = StrokeCap.Round
+        )
     }
 }
 
@@ -190,7 +299,7 @@ private fun AkashvaniAppScreen() {
                 statusText = when (playbackState) {
                     Player.STATE_BUFFERING -> "Connecting..."
                     Player.STATE_READY -> if (controller?.isPlaying == true) "On Air" else "Paused"
-                    Player.STATE_ENDED -> "Stream ended"
+                    Player.STATE_ENDED -> "Reconnecting..."
                     else -> "Ready to tune"
                 }
             }
@@ -321,40 +430,48 @@ private fun AkashvaniAppScreen() {
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "Akashvani",
-                        fontSize = 26.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = InkDark,
-                        maxLines = 1
-                    )
-                    Text(
-                        text = "ആകാശവാണി · Kerala Live Radio",
-                        fontSize = 13.sp,
-                        color = InkMuted,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
+                Row(
+                    modifier = Modifier.weight(1f),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    AkashvaniLogoMark(modifier = Modifier.size(38.dp))
+                    Spacer(Modifier.width(12.dp))
+                    Column {
+                        Text(
+                            text = "Akashvani",
+                            fontSize = 24.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = InkPrimary,
+                            maxLines = 1
+                        )
+                        Text(
+                            text = "ആകാശവാണി · Kerala Live Radio",
+                            fontSize = 12.sp,
+                            color = InkSecondary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
                 }
 
-                Spacer(Modifier.width(12.dp))
+                Spacer(Modifier.width(10.dp))
 
                 OutlinedButton(
                     onClick = { showSleepMenu = !showSleepMenu },
                     shape = RoundedCornerShape(10.dp),
+                    border = BorderStroke(1.dp, if (sleepSecondsLeft > 0L) InkPrimary else HairlineStrong),
                     contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
                 ) {
                     Icon(
                         imageVector = Icons.Rounded.Timer,
                         contentDescription = "Sleep Timer",
                         modifier = Modifier.size(18.dp),
-                        tint = if (sleepSecondsLeft > 0L) AkashvaniRed else InkDark
+                        tint = InkPrimary
                     )
                     Spacer(Modifier.width(6.dp))
                     Text(
                         text = if (sleepSecondsLeft > 0L) formatTime(sleepSecondsLeft) else "Sleep",
-                        color = if (sleepSecondsLeft > 0L) AkashvaniRed else InkDark,
+                        color = InkPrimary,
                         fontSize = 13.sp,
                         maxLines = 1,
                         softWrap = false
@@ -370,8 +487,8 @@ private fun AkashvaniAppScreen() {
                     modifier = Modifier
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(14.dp))
-                        .background(CardSurface)
-                        .border(1.dp, AkashvaniRed.copy(alpha = 0.35f), RoundedCornerShape(14.dp))
+                        .background(ElevatedBg)
+                        .border(1.dp, HairlineStrong, RoundedCornerShape(14.dp))
                         .padding(horizontal = 14.dp, vertical = 12.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
@@ -383,7 +500,7 @@ private fun AkashvaniAppScreen() {
                         Icon(
                             imageVector = Icons.Rounded.SystemUpdate,
                             contentDescription = "Update available",
-                            tint = AkashvaniRed,
+                            tint = InkPrimary,
                             modifier = Modifier.size(20.dp)
                         )
                         Spacer(Modifier.width(10.dp))
@@ -392,13 +509,13 @@ private fun AkashvaniAppScreen() {
                                 text = "Update ready (${update.latestTag})",
                                 fontSize = 14.sp,
                                 fontWeight = FontWeight.SemiBold,
-                                color = InkDark,
+                                color = InkPrimary,
                                 maxLines = 1
                             )
                             Text(
                                 text = "Updates directly without uninstalling",
                                 fontSize = 12.sp,
-                                color = InkMuted,
+                                color = InkSecondary,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
@@ -411,13 +528,13 @@ private fun AkashvaniAppScreen() {
                             context.startActivity(intent)
                         },
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = AkashvaniRed,
-                            contentColor = Color.White
+                            containerColor = InkPrimary,
+                            contentColor = InkOnLight
                         ),
                         shape = RoundedCornerShape(9.dp),
                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
                     ) {
-                        Text("Update", fontSize = 12.sp, maxLines = 1, softWrap = false)
+                        Text("Update", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false)
                     }
                 }
             }
@@ -429,9 +546,9 @@ private fun AkashvaniAppScreen() {
                     modifier = Modifier
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(14.dp))
-                        .background(CardSurface)
+                        .background(RecessedBg)
                         .border(1.dp, Hairline, RoundedCornerShape(14.dp))
-                        .padding(10.dp),
+                        .padding(8.dp),
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     listOf(0 to "Off", 15 to "15m", 30 to "30m", 45 to "45m", 60 to "60m").forEach { (mins, label) ->
@@ -447,20 +564,20 @@ private fun AkashvaniAppScreen() {
                             },
                             modifier = Modifier.weight(1f),
                             colors = ButtonDefaults.buttonColors(
-                                containerColor = if (active) AkashvaniRed else CanvasBg,
-                                contentColor = if (active) Color.White else InkDark
+                                containerColor = if (active) InkPrimary else CardSurface,
+                                contentColor = if (active) InkOnLight else InkSecondary
                             ),
                             contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp),
                             shape = RoundedCornerShape(8.dp)
                         ) {
-                            Text(label, fontSize = 12.sp, maxLines = 1, softWrap = false)
+                            Text(label, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false)
                         }
                     }
                 }
             }
         }
 
-        // Main Receiver Card with HUGE Play/Pause Button, Live Seek Bar & Exact Failure Diagnosis
+        // Main Receiver Card with HUGE Monochromatic Play/Pause Button, Live Seek Bar & Failure Diagnosis
         item {
             Column(
                 modifier = Modifier
@@ -475,7 +592,7 @@ private fun AkashvaniAppScreen() {
                     text = "${currentStation.band} · ${currentStation.frequency} · $displayStatus",
                     fontSize = 12.sp,
                     fontFamily = FontFamily.Monospace,
-                    color = if (isPlaying) AkashvaniRed else InkMuted,
+                    color = if (isPlaying) InkPrimary else InkSecondary,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
@@ -486,7 +603,7 @@ private fun AkashvaniAppScreen() {
                     text = currentStation.name,
                     fontSize = 24.sp,
                     fontWeight = FontWeight.Bold,
-                    color = InkDark,
+                    color = InkPrimary,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
@@ -495,7 +612,7 @@ private fun AkashvaniAppScreen() {
                     Text(
                         text = currentStation.malayalamName,
                         fontSize = 15.sp,
-                        color = InkMuted,
+                        color = InkSecondary,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
@@ -503,18 +620,25 @@ private fun AkashvaniAppScreen() {
 
                 Spacer(Modifier.height(26.dp))
 
-                // HUGE Play / Pause Focal Button (138dp)
+                // HUGE Monochromatic Play / Pause Focal Button (138dp)
                 Box(
                     modifier = Modifier
                         .size(138.dp)
                         .clip(CircleShape)
-                        .background(if (isPlaying) InkDark else AkashvaniRed)
+                        .background(if (isPlaying) ElevatedBg else InkPrimary)
+                        .then(
+                            if (isPlaying) {
+                                Modifier.border(2.dp, InkPrimary, CircleShape)
+                            } else {
+                                Modifier
+                            }
+                        )
                         .clickable { togglePlayPause() },
                     contentAlignment = Alignment.Center
                 ) {
                     if (isBuffering || diagnostics.isReconnecting) {
                         CircularProgressIndicator(
-                            color = Color.White,
+                            color = if (isPlaying) InkPrimary else InkOnLight,
                             strokeWidth = 4.dp,
                             modifier = Modifier.size(44.dp)
                         )
@@ -522,21 +646,21 @@ private fun AkashvaniAppScreen() {
                         Icon(
                             imageVector = if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
                             contentDescription = if (isPlaying) "Pause" else "Play",
-                            tint = Color.White,
+                            tint = if (isPlaying) InkPrimary else InkOnLight,
                             modifier = Modifier.size(68.dp)
                         )
                     }
                 }
 
-                // Exact Plain-English Offline / Error Diagnosis Card
+                // Exact Plain-English Offline / Error Diagnosis Card (Monochromatic High-Contrast)
                 if (!diagnostics.isOnline || diagnostics.errorTitle != null) {
                     Spacer(Modifier.height(20.dp))
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(14.dp))
-                            .background(ErrorBg)
-                            .border(1.dp, AkashvaniRed.copy(alpha = 0.25f), RoundedCornerShape(14.dp))
+                            .background(ElevatedBg)
+                            .border(1.dp, HairlineStrong, RoundedCornerShape(14.dp))
                             .padding(14.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
@@ -547,7 +671,7 @@ private fun AkashvaniAppScreen() {
                             Icon(
                                 imageVector = if (!diagnostics.isOnline) Icons.Rounded.WifiOff else Icons.Rounded.ErrorOutline,
                                 contentDescription = null,
-                                tint = AkashvaniRed,
+                                tint = InkPrimary,
                                 modifier = Modifier.size(20.dp)
                             )
                             Column(modifier = Modifier.weight(1f)) {
@@ -555,14 +679,14 @@ private fun AkashvaniAppScreen() {
                                     text = diagnostics.errorTitle ?: "No internet connection",
                                     fontSize = 14.sp,
                                     fontWeight = FontWeight.SemiBold,
-                                    color = ErrorText
+                                    color = InkPrimary
                                 )
                                 Spacer(Modifier.height(2.dp))
                                 Text(
                                     text = diagnostics.errorDetail
                                         ?: "Check Wi-Fi or mobile data. Playback will resume automatically when internet returns.",
                                     fontSize = 13.sp,
-                                    color = ErrorText.copy(alpha = 0.9f),
+                                    color = InkSecondary,
                                     lineHeight = 18.sp
                                 )
                             }
@@ -577,19 +701,20 @@ private fun AkashvaniAppScreen() {
                                     onClick = { playStation(currentStation) },
                                     modifier = Modifier.weight(1f),
                                     shape = RoundedCornerShape(10.dp),
+                                    border = BorderStroke(1.dp, HairlineStrong),
                                     contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)
                                 ) {
                                     Icon(
                                         imageVector = Icons.Rounded.Refresh,
                                         contentDescription = null,
-                                        tint = InkDark,
+                                        tint = InkPrimary,
                                         modifier = Modifier.size(16.dp)
                                     )
                                     Spacer(Modifier.width(6.dp))
                                     Text(
                                         text = "Try Again",
                                         fontSize = 13.sp,
-                                        color = InkDark,
+                                        color = InkPrimary,
                                         maxLines = 1,
                                         softWrap = false
                                     )
@@ -604,8 +729,8 @@ private fun AkashvaniAppScreen() {
                                         },
                                         modifier = Modifier.weight(1f),
                                         colors = ButtonDefaults.buttonColors(
-                                            containerColor = AkashvaniRed,
-                                            contentColor = Color.White
+                                            containerColor = InkPrimary,
+                                            contentColor = InkOnLight
                                         ),
                                         shape = RoundedCornerShape(10.dp),
                                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)
@@ -613,6 +738,7 @@ private fun AkashvaniAppScreen() {
                                         Text(
                                             text = "Akashvani Kerala",
                                             fontSize = 13.sp,
+                                            fontWeight = FontWeight.SemiBold,
                                             maxLines = 1,
                                             softWrap = false
                                         )
@@ -641,7 +767,7 @@ private fun AkashvaniAppScreen() {
                         },
                         fontSize = 12.sp,
                         fontFamily = FontFamily.Monospace,
-                        color = InkMuted,
+                        color = InkSecondary,
                         maxLines = 1
                     )
 
@@ -650,7 +776,7 @@ private fun AkashvaniAppScreen() {
                         fontSize = 12.sp,
                         fontFamily = FontFamily.Monospace,
                         fontWeight = FontWeight.SemiBold,
-                        color = if (isLiveEdge) AkashvaniRed else InkDark,
+                        color = if (isLiveEdge) InkPrimary else InkSecondary,
                         maxLines = 1
                     )
                 }
@@ -666,9 +792,12 @@ private fun AkashvaniAppScreen() {
                     valueRange = 0f..(windowDurationMs.coerceAtLeast(1L).toFloat()),
                     enabled = isSeekable,
                     colors = SliderDefaults.colors(
-                        thumbColor = AkashvaniRed,
-                        activeTrackColor = AkashvaniRed,
-                        inactiveTrackColor = Hairline
+                        thumbColor = InkPrimary,
+                        activeTrackColor = InkPrimary,
+                        inactiveTrackColor = TrackInactive,
+                        disabledThumbColor = InkMuted,
+                        disabledActiveTrackColor = HairlineStrong,
+                        disabledInactiveTrackColor = TrackInactive
                     )
                 )
 
@@ -678,26 +807,35 @@ private fun AkashvaniAppScreen() {
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     IconButton(onClick = { seekBy(-15_000L) }, enabled = isSeekable) {
-                        Icon(Icons.Rounded.Replay10, contentDescription = "Rewind 15 seconds", tint = InkDark)
+                        Icon(
+                            Icons.Rounded.Replay10,
+                            contentDescription = "Rewind 15 seconds",
+                            tint = if (isSeekable) InkPrimary else InkMuted
+                        )
                     }
 
                     OutlinedButton(
                         onClick = { controller?.seekToDefaultPosition() },
                         enabled = isSeekable && !isLiveEdge,
                         shape = RoundedCornerShape(10.dp),
+                        border = BorderStroke(1.dp, if (isSeekable && !isLiveEdge) HairlineStrong else Hairline),
                         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
                     ) {
                         Text(
                             text = "Jump to Live",
                             fontSize = 13.sp,
-                            color = if (!isLiveEdge) AkashvaniRed else InkMuted,
+                            color = if (isSeekable && !isLiveEdge) InkPrimary else InkMuted,
                             maxLines = 1,
                             softWrap = false
                         )
                     }
 
                     IconButton(onClick = { seekBy(15_000L) }, enabled = isSeekable && !isLiveEdge) {
-                        Icon(Icons.Rounded.Forward10, contentDescription = "Forward 15 seconds", tint = InkDark)
+                        Icon(
+                            Icons.Rounded.Forward10,
+                            contentDescription = "Forward 15 seconds",
+                            tint = if (isSeekable && !isLiveEdge) InkPrimary else InkMuted
+                        )
                     }
                 }
             }
@@ -710,7 +848,7 @@ private fun AkashvaniAppScreen() {
                     text = "Kerala Stations (${filteredStations.size})",
                     fontSize = 18.sp,
                     fontWeight = FontWeight.SemiBold,
-                    color = InkDark,
+                    color = InkPrimary,
                     maxLines = 1,
                     modifier = Modifier.padding(top = 4.dp)
                 )
@@ -719,7 +857,7 @@ private fun AkashvaniAppScreen() {
                     modifier = Modifier
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(12.dp))
-                        .background(CardSurface)
+                        .background(RecessedBg)
                         .border(1.dp, Hairline, RoundedCornerShape(12.dp))
                         .padding(4.dp),
                     horizontalArrangement = Arrangement.spacedBy(4.dp)
@@ -734,7 +872,7 @@ private fun AkashvaniAppScreen() {
                             modifier = Modifier
                                 .weight(1f)
                                 .clip(RoundedCornerShape(9.dp))
-                                .background(if (active) InkDark else Color.Transparent)
+                                .background(if (active) InkPrimary else Color.Transparent)
                                 .clickable { selectedTab = tabId }
                                 .padding(vertical = 10.dp),
                             contentAlignment = Alignment.Center
@@ -743,7 +881,7 @@ private fun AkashvaniAppScreen() {
                                 text = label,
                                 fontSize = 13.sp,
                                 fontWeight = FontWeight.SemiBold,
-                                color = if (active) Color.White else InkMuted,
+                                color = if (active) InkOnLight else InkSecondary,
                                 maxLines = 1,
                                 softWrap = false
                             )
@@ -759,10 +897,10 @@ private fun AkashvaniAppScreen() {
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(14.dp))
-                    .background(if (selected) Color(0xFFFDF2F3) else CardSurface)
+                    .background(if (selected) SelectedBg else CardSurface)
                     .border(
                         width = 1.dp,
-                        color = if (selected) AkashvaniRed else Hairline,
+                        color = if (selected) InkPrimary.copy(alpha = 0.65f) else Hairline,
                         shape = RoundedCornerShape(14.dp)
                     )
                     .clickable { playStation(station) }
@@ -778,14 +916,14 @@ private fun AkashvaniAppScreen() {
                             text = station.name,
                             fontSize = 16.sp,
                             fontWeight = FontWeight.SemiBold,
-                            color = if (selected) AkashvaniRed else InkDark,
+                            color = InkPrimary,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
                         Text(
                             text = "${station.city} · ${station.frequency}",
                             fontSize = 12.sp,
-                            color = InkMuted,
+                            color = InkSecondary,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
@@ -801,7 +939,8 @@ private fun AkashvaniAppScreen() {
                         },
                         fontSize = 12.sp,
                         fontFamily = FontFamily.Monospace,
-                        color = if (selected) AkashvaniRed else InkMuted,
+                        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                        color = if (selected) InkPrimary else InkMuted,
                         maxLines = 1,
                         softWrap = false
                     )
