@@ -1,0 +1,219 @@
+import { RefreshCw, Search, Star } from 'lucide-react';
+import type { BandFilter, PlaybackStatus, RadioStation } from '../types/radio';
+import { filterStations, getKeralaIstTime } from '../utils/radioLogic';
+
+interface StationListProps {
+  stations: RadioStation[];
+  selectedStationId: string;
+  playbackStatus: PlaybackStatus;
+  liveStatuses: Record<string, 'live' | 'off-air'>;
+  isCheckingHealth: boolean;
+  bandFilter: BandFilter;
+  searchQuery: string;
+  favoriteIds: string[];
+  onBandFilterChange: (band: BandFilter) => void;
+  onSearchChange: (q: string) => void;
+  onSelectStation: (station: RadioStation) => void;
+  onToggleFavorite: (stationId: string) => void;
+  onRefreshHealth: () => void;
+}
+
+const BAND_TABS: { id: BandFilter; label: string }[] = [
+  { id: 'ALL', label: 'All' },
+  { id: 'MW', label: 'MW' },
+  { id: 'FM', label: 'FM' },
+  { id: 'FAVORITES', label: 'Saved' },
+];
+
+export function StationList({
+  stations,
+  selectedStationId,
+  playbackStatus,
+  liveStatuses,
+  isCheckingHealth,
+  bandFilter,
+  searchQuery,
+  favoriteIds,
+  onBandFilterChange,
+  onSearchChange,
+  onSelectStation,
+  onToggleFavorite,
+  onRefreshHealth,
+}: StationListProps) {
+  const filtered = filterStations(stations, bandFilter, searchQuery, favoriteIds);
+  const ist = getKeralaIstTime();
+  const liveCount = Object.values(liveStatuses).filter((s) => s === 'live').length;
+
+  return (
+    <aside
+      id="stations"
+      aria-label="Kerala Akashvani Stations"
+      className="bg-white border border-[#E2E5EB] rounded-3xl p-5 sm:p-6 flex flex-col h-full"
+    >
+      {/* Header Row */}
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h2 className="font-display text-xl font-bold text-[#111318]">Kerala Stations</h2>
+          <p className="mt-0.5 text-xs text-[#5A6070] font-mono tabular-nums">
+            {ist.formatted}
+            {liveCount > 0 ? ` · ${liveCount} on air now` : ''}
+          </p>
+        </div>
+
+        <button
+          type="button"
+          onClick={onRefreshHealth}
+          disabled={isCheckingHealth}
+          aria-label="Check which stations are live right now"
+          className="inline-flex items-center gap-1.5 px-3 py-2 min-h-[38px] text-xs font-semibold text-[#111318] bg-[#F6F7F9] hover:bg-[#ECEEF3] border border-[#E2E5EB] rounded-xl transition-colors whitespace-nowrap shrink-0 cursor-pointer disabled:opacity-60"
+        >
+          <RefreshCw
+            className={`w-3.5 h-3.5 ${isCheckingHealth ? 'animate-spin' : ''}`}
+            aria-hidden="true"
+          />
+          <span>Refresh</span>
+        </button>
+      </div>
+
+      {/* Filter Tabs & Search */}
+      <div className="mt-4 flex flex-col gap-3">
+        <div
+          role="tablist"
+          aria-label="Filter stations by band"
+          className="grid grid-cols-4 gap-1 p-1 bg-[#F6F7F9] border border-[#E2E5EB] rounded-xl"
+        >
+          {BAND_TABS.map((tab) => {
+            const active = bandFilter === tab.id;
+            return (
+              <button
+                key={tab.id}
+                role="tab"
+                type="button"
+                aria-selected={active}
+                onClick={() => onBandFilterChange(tab.id)}
+                className={`py-2 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap cursor-pointer ${
+                  active
+                    ? 'bg-white text-[#111318] shadow-xs'
+                    : 'text-[#5A6070] hover:text-[#111318]'
+                }`}
+              >
+                {tab.label}
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="relative">
+          <label htmlFor="station-search" className="sr-only">
+            Search Kerala stations
+          </label>
+          <Search
+            className="w-4 h-4 text-[#6B7280] absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none"
+            aria-hidden="true"
+          />
+          <input
+            id="station-search"
+            type="search"
+            value={searchQuery}
+            onChange={(e) => onSearchChange(e.target.value)}
+            placeholder="Search Alappuzha, Kochi, Kozhikode..."
+            className="w-full h-11 pl-10 pr-3.5 text-sm bg-[#F6F7F9] border border-[#E2E5EB] rounded-xl text-[#111318] placeholder:text-[#788092] focus:outline-none focus:border-[#111318] focus:bg-white transition-colors"
+          />
+        </div>
+      </div>
+
+      {/* Station Rows */}
+      <div className="mt-4 -mx-2 flex-1 overflow-y-auto max-h-[430px] divide-y divide-[#ECEEF3] pr-1">
+        {filtered.length === 0 ? (
+          <div className="py-10 px-4 text-center">
+            <p className="text-sm font-medium text-[#111318]">No stations match your filter</p>
+            <p className="mt-1 text-xs text-[#5A6070]">
+              {bandFilter === 'FAVORITES'
+                ? 'Tap the star next to any station to save it here.'
+                : 'Try clearing the search box or switching back to All.'}
+            </p>
+          </div>
+        ) : (
+          filtered.map((station) => {
+            const isSelected = station.id === selectedStationId;
+            const isPlayingThis = isSelected && playbackStatus === 'playing';
+            const isFav = favoriteIds.includes(station.id);
+            const liveState = liveStatuses[station.id];
+
+            const statusCopy = isPlayingThis
+              ? 'Playing'
+              : liveState === 'live'
+                ? 'On Air'
+                : liveState === 'off-air'
+                  ? station.schedule === 'daytime'
+                    ? 'Daytime'
+                    : 'Offline'
+                  : station.schedule === 'daytime'
+                    ? 'Daytime'
+                    : '24x7';
+
+            return (
+              <div
+                key={station.id}
+                className={`flex items-center justify-between gap-2 px-2.5 py-2.5 rounded-xl transition-colors ${
+                  isSelected ? 'bg-[#FDF4F4]' : 'hover:bg-[#F6F7F9]'
+                }`}
+              >
+                <button
+                  type="button"
+                  onClick={() => onSelectStation(station)}
+                  className="flex-1 min-w-0 text-left min-h-[48px] flex flex-col justify-center cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#C8232C] rounded-lg"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span
+                      className={`text-sm font-semibold truncate ${
+                        isSelected ? 'text-[#C8232C]' : 'text-[#111318]'
+                      }`}
+                    >
+                      {station.name}
+                    </span>
+                    <span
+                      className={`font-mono text-[11px] shrink-0 ${
+                        isPlayingThis
+                          ? 'text-[#C8232C] font-semibold'
+                          : liveState === 'live'
+                            ? 'text-[#1E6F50] font-medium'
+                            : 'text-[#6B7280]'
+                      }`}
+                    >
+                      {statusCopy}
+                    </span>
+                  </div>
+                  <div className="mt-0.5 flex items-center gap-1.5 text-xs text-[#5A6070] truncate">
+                    <span className="font-mono tabular-nums">{station.frequency}</span>
+                    <span aria-hidden="true">·</span>
+                    <span className="truncate">{station.city}</span>
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => onToggleFavorite(station.id)}
+                  aria-label={
+                    isFav
+                      ? `Remove ${station.name} from saved stations`
+                      : `Save ${station.name} to favorites`
+                  }
+                  aria-pressed={isFav}
+                  className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-lg hover:bg-white transition-colors shrink-0 cursor-pointer"
+                >
+                  <Star
+                    className={`w-4 h-4 ${
+                      isFav ? 'fill-[#C8232C] text-[#C8232C]' : 'text-[#9CA3AF]'
+                    }`}
+                    aria-hidden="true"
+                  />
+                </button>
+              </div>
+            );
+          })
+        )}
+      </div>
+    </aside>
+  );
+}

@@ -1,0 +1,107 @@
+name: Build Akashvani Android APK & Publish Release
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+    inputs:
+      release_notes:
+        description: "Optional release notes"
+        required: false
+        default: "Automated Android APK build of Akashvani Malayalam Live Radio."
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    name: Build Signed APK & Upload ZIP to Releases
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Set up Gradle 8.9
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+
+      - name: Generate signing keystore for installable release APK
+        run: |
+          keytool -genkeypair -v \
+            -keystore android/app/akashvani-release.jks \
+            -storepass akashvani2026 \
+            -keypass akashvani2026 \
+            -alias akashvani \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -dname "CN=Akashvani Malayalam, OU=Broadcast, O=Akashvani, L=Kochi, ST=Kerala, C=IN"
+
+      - name: Inject repository stations.json URL for remote updates
+        run: |
+          RAW_URL="https://raw.githubusercontent.com/${{ github.repository }}/${{ github.ref_name }}/stations.json"
+          echo "REMOTE_STATIONS_URL=${RAW_URL}" >> "$GITHUB_ENV"
+
+      - name: Build Release APK
+        working-directory: android
+        env:
+          AKASHVANI_STORE_FILE: akashvani-release.jks
+          AKASHVANI_STORE_PASSWORD: akashvani2026
+          AKASHVANI_KEY_ALIAS: akashvani
+          AKASHVANI_KEY_PASSWORD: akashvani2026
+        run: |
+          gradle assembleRelease --no-daemon \
+            -PremoteStationsUrl="${REMOTE_STATIONS_URL}" \
+            -PversionCode="${{ github.run_number }}" \
+            -PversionName="1.0.${{ github.run_number }}"
+
+      - name: Package APK into ZIP archive
+        run: |
+          mkdir -p release-dist
+          APK_SRC="android/app/build/outputs/apk/release/app-release.apk"
+          APK_OUT="release-dist/Akashvani-v1.0.${{ github.run_number }}.apk"
+          ZIP_OUT="release-dist/Akashvani-v1.0.${{ github.run_number }}-android-apk.zip"
+
+          cp "$APK_SRC" "$APK_OUT"
+
+          cat << 'EOF' > release-dist/HOW-TO-INSTALL.txt
+          Akashvani — Live Malayalam Radio (Android APK)
+          ==============================================
+          1. Unzip this file on your Android phone (Files app -> Extract).
+          2. Tap Akashvani-v1.0.X.apk to install.
+          3. If Android asks for permission to install from your browser/Files app, tap Allow once.
+          4. Open Akashvani, tap the huge Play button, and enjoy live Malayalam Akashvani streams!
+          EOF
+
+          (cd release-dist && zip -9 "Akashvani-v1.0.${{ github.run_number }}-android-apk.zip" "Akashvani-v1.0.${{ github.run_number }}.apk" "HOW-TO-INSTALL.txt")
+          ls -lh "$ZIP_OUT"
+
+      - name: Publish ZIP to GitHub Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: "v1.0.${{ github.run_number }}"
+          name: "Akashvani v1.0.${{ github.run_number }}"
+          body: |
+            ### Akashvani — Native Android App (Malayalam Live Radio)
+            ${{ inputs.release_notes || 'Built automatically via GitHub Actions.' }}
+
+            **Included in this ZIP:**
+            - `Akashvani-v1.0.${{ github.run_number }}.apk` (release-signed, ready to install on Android 7.0+)
+            - Background & lock-screen playback with official Akashvani stream headers
+            - Huge Play/Pause button, live rewind seeking (-15s / +15s / Live), auto-reconnect, and sleep timer
+            - Automatic remote station list sync from `stations.json` in this repository
+          files: |
+            release-dist/Akashvani-v1.0.${{ github.run_number }}-android-apk.zip
+          draft: false
+          prerelease: false

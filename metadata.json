@@ -1,0 +1,6 @@
+{
+  "name": "Akashvani",
+  "description": "Live Malayalam radio tuner for All India Radio (Akashvani) Kerala stations with instant play/pause, live rewind seeking, sleep timer, and a ready-to-build native Android APK via GitHub Releases.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

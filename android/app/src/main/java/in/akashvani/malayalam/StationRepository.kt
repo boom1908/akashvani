@@ -1,0 +1,217 @@
+package `in`.akashvani.malayalam
+
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import org.json.JSONObject
+import java.net.HttpURLConnection
+import java.net.URL
+
+data class RadioStation(
+    val id: String,
+    val name: String,
+    val malayalamName: String,
+    val city: String,
+    val band: String,
+    val frequency: String,
+    val schedule: String,
+    val description: String,
+    val streamUrl: String,
+    val fallbackUrls: List<String> = emptyList()
+)
+
+object StationRepository {
+
+    val builtInStations: List<RadioStation> = listOf(
+        RadioStation(
+            id = "akashvani-kerala",
+            name = "Akashvani Kerala",
+            malayalamName = "ആകാശവാണി കേരളം",
+            city = "Thiruvananthapuram / Alappuzha",
+            band = "MW",
+            frequency = "576 / 1161 kHz",
+            schedule = "24x7",
+            description = "Primary Malayalam regional service including Alappuzha 576 MW & news.",
+            streamUrl = "https://radio.wavespb.com/live/6ff13de7ea9b53d7/6ff13de7ea9b53d7.m3u8",
+            fallbackUrls = listOf(
+                "https://air.pc.cdn.bitgravity.com/air/live/pbaudio230/playlist.m3u8",
+                "https://airhlspush.pc.cdn.bitgravity.com/httppush/hlspbaudio026/hlspbaudio026_Auto.m3u8"
+            )
+        ),
+        RadioStation(
+            id = "ananthapuri-fm",
+            name = "Ananthapuri FM",
+            malayalamName = "അനന്തപുരി എഫ്.എം",
+            city = "Thiruvananthapuram",
+            band = "FM",
+            frequency = "101.9 MHz",
+            schedule = "24x7",
+            description = "Capital city FM broadcast with Malayalam film classics and news.",
+            streamUrl = "https://air.pc.cdn.bitgravity.com/air/live/pbaudio229/playlist.m3u8",
+            fallbackUrls = listOf(
+                "https://airhlspush.pc.cdn.bitgravity.com/httppush/hlspbaudio026/hlspbaudio026_Auto.m3u8"
+            )
+        ),
+        RadioStation(
+            id = "akashvani-kochi",
+            name = "Akashvani Kochi",
+            malayalamName = "ആകാശവാണി കൊച്ചി",
+            city = "Kochi",
+            band = "FM",
+            frequency = "102.3 MHz",
+            schedule = "24x7",
+            description = "Central Kerala primary Malayalam broadcast from Kochi kendra.",
+            streamUrl = "https://radio.wavespb.com/live/70400e7510e87cdf/70400e7510e87cdf.m3u8"
+        ),
+        RadioStation(
+            id = "fm-rainbow-kochi",
+            name = "FM Rainbow Kochi",
+            malayalamName = "എഫ്.എം റെയിൻബോ കൊച്ചി",
+            city = "Kochi",
+            band = "FM",
+            frequency = "107.5 MHz",
+            schedule = "24x7",
+            description = "Malayalam and pan-Indian music, listener requests, and city updates.",
+            streamUrl = "https://radio.wavespb.com/live/7df6f2a8c3c4d33b/7df6f2a8c3c4d33b.m3u8"
+        ),
+        RadioStation(
+            id = "akashvani-kozhikode",
+            name = "Akashvani Kozhikode",
+            malayalamName = "ആകാശവാണി കോഴിക്കോട്",
+            city = "Kozhikode",
+            band = "MW",
+            frequency = "684 kHz",
+            schedule = "24x7",
+            description = "Malabar region primary Medium Wave broadcast.",
+            streamUrl = "https://radio.wavespb.com/live/8321393de70015fc/8321393de70015fc.m3u8",
+            fallbackUrls = listOf(
+                "https://air.pc.cdn.bitgravity.com/air/live/pbaudio083/playlist.m3u8"
+            )
+        ),
+        RadioStation(
+            id = "kozhikode-real-fm",
+            name = "Kozhikode Real FM",
+            malayalamName = "കോഴിക്കോട് റിയൽ എഫ്.എം",
+            city = "Kozhikode",
+            band = "FM",
+            frequency = "103.6 MHz",
+            schedule = "24x7",
+            description = "Malabar FM music and contemporary Malayalam programs.",
+            streamUrl = "https://radio.wavespb.com/live/b69c296065db7627/b69c296065db7627.m3u8",
+            fallbackUrls = listOf(
+                "https://air.pc.cdn.bitgravity.com/air/live/pbaudio083/playlist.m3u8"
+            )
+        ),
+        RadioStation(
+            id = "vb-malayalam",
+            name = "Vividh Bharati Malayalam",
+            malayalamName = "വിവിധ് ഭാരതി മലയാളം",
+            city = "Kerala",
+            band = "FM",
+            frequency = "102.3 / Digital",
+            schedule = "24x7",
+            description = "Timeless film songs and vintage radio entertainment.",
+            streamUrl = "https://radio.wavespb.com/live/ad3a8436a329e2d6/ad3a8436a329e2d6.m3u8"
+        ),
+        RadioStation(
+            id = "akashvani-thrissur",
+            name = "Akashvani Thrissur",
+            malayalamName = "ആകാശവാണി തൃശ്ശൂർ",
+            city = "Thrissur",
+            band = "MW",
+            frequency = "630 kHz",
+            schedule = "daytime",
+            description = "Cultural capital Medium Wave broadcast (5:55 AM – 11:00 PM IST).",
+            streamUrl = "https://radio.wavespb.com/live/f70fdeca437dc326/f70fdeca437dc326.m3u8"
+        ),
+        RadioStation(
+            id = "akashvani-kannur",
+            name = "Akashvani Kannur",
+            malayalamName = "ആകാശവാണി കണ്ണൂർ",
+            city = "Kannur",
+            band = "FM",
+            frequency = "101.5 MHz",
+            schedule = "daytime",
+            description = "North Malabar regional broadcast (5:55 AM – 11:00 PM IST).",
+            streamUrl = "https://radio.wavespb.com/live/b82c91a395fc4a7d/b82c91a395fc4a7d.m3u8"
+        ),
+        RadioStation(
+            id = "akashvani-manjeri",
+            name = "Akashvani Manjeri",
+            malayalamName = "ആകാശവാണി മഞ്ചേരി",
+            city = "Malappuram",
+            band = "FM",
+            frequency = "102.7 MHz",
+            schedule = "daytime",
+            description = "Malappuram district regional radio (5:55 AM – 11:00 PM IST).",
+            streamUrl = "https://radio.wavespb.com/live/58390a2ed33cea4a/58390a2ed33cea4a.m3u8"
+        ),
+        RadioStation(
+            id = "akashvani-devikulam",
+            name = "Akashvani Devikulam",
+            malayalamName = "ആകാശവാണി ദേവികുളം",
+            city = "Idukki",
+            band = "FM",
+            frequency = "101.4 MHz",
+            schedule = "daytime",
+            description = "High-range Idukki broadcast (5:55 AM – 11:00 PM IST).",
+            streamUrl = "https://radio.wavespb.com/live/e97acc829da9bf2a/e97acc829da9bf2a.m3u8"
+        ),
+        RadioStation(
+            id = "akashvani-raagam",
+            name = "Akashvani Raagam",
+            malayalamName = "ആകാശവാണി രാഗം",
+            city = "National · Classical",
+            band = "FM",
+            frequency = "24x7 Classical",
+            schedule = "24x7",
+            description = "Dedicated 24-hour Carnatic and Hindustani classical music channel.",
+            streamUrl = "https://d3r9rhourdc02u.cloudfront.net/assets/radio/airbang04/air036_Auto.m3u8"
+        )
+    )
+
+    suspend fun fetchStationsRemoteOrFallback(): List<RadioStation> = withContext(Dispatchers.IO) {
+        try {
+            val connection = (URL(BuildConfig.REMOTE_STATIONS_URL).openConnection() as HttpURLConnection).apply {
+                connectTimeout = 6000
+                readTimeout = 6000
+                setRequestProperty("User-Agent", "AkashvaniAndroid/1.0")
+            }
+            if (connection.responseCode == 200) {
+                val raw = connection.inputStream.bufferedReader().use { it.readText() }
+                val root = JSONObject(raw)
+                val arr = root.optJSONArray("stations")
+                if (arr != null && arr.length() > 0) {
+                    val parsed = mutableListOf<RadioStation>()
+                    for (i in 0 until arr.length()) {
+                        val obj = arr.getJSONObject(i)
+                        val fallbacks = mutableListOf<String>()
+                        val fbArr = obj.optJSONArray("fallbackUrls")
+                        if (fbArr != null) {
+                            for (j in 0 until fbArr.length()) {
+                                fallbacks.add(fbArr.getString(j))
+                            }
+                        }
+                        parsed.add(
+                            RadioStation(
+                                id = obj.getString("id"),
+                                name = obj.getString("name"),
+                                malayalamName = obj.optString("malayalamName", ""),
+                                city = obj.optString("city", "Kerala"),
+                                band = obj.optString("band", "FM"),
+                                frequency = obj.optString("frequency", ""),
+                                schedule = obj.optString("schedule", "24x7"),
+                                description = obj.optString("description", ""),
+                                streamUrl = obj.getString("streamUrl"),
+                                fallbackUrls = fallbacks
+                            )
+                        )
+                    }
+                    if (parsed.isNotEmpty()) return@withContext parsed
+                }
+            }
+        } catch (_: Exception) {
+            // Fall back silently to bundled station list
+        }
+        builtInStations
+    }
+}
