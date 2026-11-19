@@ -162,6 +162,51 @@ export function isAllowedBroadcastHost(rawUrl: string): boolean {
 }
 
 /**
+ * Returns true for official Akashvani / Prasar Bharati broadcast hosts that expect
+ * the Akashvani web player Referer, Origin, and browser User-Agent headers.
+ */
+export function isAkashvaniHost(rawUrl: string): boolean {
+  try {
+    const host = new URL(rawUrl).hostname.toLowerCase();
+    const akashvaniSuffixes = [
+      'wavespb.com',
+      'bitgravity.com',
+      'prasarbharati.org',
+      'prasarbharati.gov.in',
+      'akashvani.gov.in',
+      'newsonair.gov.in',
+      'd3r9rhourdc02u.cloudfront.net',
+    ];
+    return akashvaniSuffixes.some((suffix) => host === suffix || host.endsWith(`.${suffix}`));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Picks the exact HTTP headers each broadcast host expects:
+ * - Official Akashvani CDNs receive Akashvani web-player Referer/Origin + mobile Chrome UA.
+ * - Third-party Kerala FM CDNs (such as Triton Digital / StreamTheWorld for Radio Suno 91.7)
+ *   receive a clean media-player User-Agent because Triton cuts off raw streams after 32 KB
+ *   when it sees a Chrome browser User-Agent.
+ */
+export function getBroadcastRequestHeaders(rawUrl: string): Record<string, string> {
+  if (isAkashvaniHost(rawUrl)) {
+    return {
+      'User-Agent':
+        'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36',
+      Referer: 'https://akashvani.gov.in/',
+      Origin: 'https://akashvani.gov.in',
+      Accept: '*/*',
+    };
+  }
+  return {
+    'User-Agent': 'VLC/3.0.18 LibVLC/3.0.18',
+    Accept: '*/*',
+  };
+}
+
+/**
  * Rewrites relative and absolute URLs inside an HLS .m3u8 manifest
  * so every sub-playlist and audio segment routes cleanly through our local proxy.
  */

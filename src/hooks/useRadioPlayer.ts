@@ -199,16 +199,25 @@ export function useRadioPlayer(selectedStation: RadioStation | null): UseRadioPl
       }
     };
 
+    const handleEnded = () => {
+      // Live radio streams should never naturally end; reconnect or switch to fallback on unexpected EOF
+      if (!currentIsHlsRef.current && statusRef.current === 'playing' && directErrorHandlerRef.current) {
+        directErrorHandlerRef.current();
+      }
+    };
+
     audio.addEventListener('playing', handlePlaying);
     audio.addEventListener('pause', handlePause);
     audio.addEventListener('waiting', handleWaiting);
     audio.addEventListener('error', handleError);
+    audio.addEventListener('ended', handleEnded);
 
     return () => {
       audio.removeEventListener('playing', handlePlaying);
       audio.removeEventListener('pause', handlePause);
       audio.removeEventListener('waiting', handleWaiting);
       audio.removeEventListener('error', handleError);
+      audio.removeEventListener('ended', handleEnded);
       clearTimers();
       if (rafRef.current) window.cancelAnimationFrame(rafRef.current);
       hlsRef.current?.destroy();

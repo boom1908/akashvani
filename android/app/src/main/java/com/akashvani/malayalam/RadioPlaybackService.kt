@@ -14,8 +14,11 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DataSource
+import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.datasource.HttpDataSource
+import androidx.media3.datasource.TransferListener
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.session.MediaSession
@@ -65,8 +68,8 @@ class RadioPlaybackService : MediaSessionService() {
     override fun onCreate() {
         super.onCreate()
 
-        // Present official Akashvani web player headers so Prasar Bharati CDN never blocks playback
-        val httpFactory = DefaultHttpDataSource.Factory()
+        // Official Akashvani headers for Prasar Bharati CDNs ONLY
+        val akashvaniHttpFactory = DefaultHttpDataSource.Factory()
             .setUserAgent(
                 "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 " +
                     "(KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
@@ -81,6 +84,21 @@ class RadioPlaybackService : MediaSessionService() {
             .setReadTimeoutMs(15_000)
             .setAllowCrossProtocolRedirects(true)
 
+        // Clean native media-player headers for Kerala FM CDNs (Triton Digital / Radio Suno 91.7
+        // cuts off raw audio streams after 32 KB if it receives a Chrome browser User-Agent)
+        val generalFmHttpFactory = DefaultHttpDataSource.Factory()
+            .setUserAgent("VLC/3.0.18 LibVLC/3.0.18")
+            .setConnectTimeoutMs(10_000)
+            .setReadTimeoutMs(15_000)
+            .setAllowCrossProtocolRedirects(true)
+
+        val hostAwareDataSourceFactory = DataSource.Factory {
+            HostAwareHttpDataSource(
+                akashvaniSource = akashvaniHttpFactory.createDataSource(),
+                generalFmSource = generalFmHttpFactory.createDataSource()
+            )
+        }
+
         val audioAttributes = AudioAttributes.Builder()
             .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
             .setUsage(C.USAGE_MEDIA)
@@ -88,7 +106,7 @@ class RadioPlaybackService : MediaSessionService() {
 
         // Audio focus (auto-pause for phone calls) + noisy handling (auto-pause if headphones unplug)
         val exoPlayer = ExoPlayer.Builder(this)
-            .setMediaSourceFactory(DefaultMediaSourceFactory(httpFactory))
+            .setMediaSourceFactory(DefaultMediaSourceFactory(hostAwareDataSourceFactory))
             .setAudioAttributes(audioAttributes, true)
             .setHandleAudioBecomingNoisy(true)
             .setWakeMode(C.WAKE_MODE_NETWORK)
@@ -137,8 +155,20 @@ class RadioPlaybackService : MediaSessionService() {
                         resumeWhenOnline = false
                         PlaybackDiagnostics.clearError(usingFallback = currentUrlIndex > 0)
                     }
-                    Player.STATE_IDLE, Player.STATE_ENDED -> {
+                    Player.STATE_IDLE -> {
                         cancelStallWatchdog()
+                    }
+                    Player.STATE_ENDED -> {
+                        cancelStallWatchdog()
+                        // Live radio streams should never naturally end; reconnect or try fallback on premature EOF
+                        if (exoPlayer.playWhenReady && candidateUrls.isNotEmpty()) {
+                            handleStreamFailure(
+                                exo = exoPlayer,
+                                httpStatus = null,
+                                isTimeout = false,
+                                isStalled = false
+                            )
+                        }
                     }
                 }
             }
@@ -349,5 +379,54 @@ class RadioPlaybackService : MediaSessionService() {
         }
         player = null
         super.onDestroy()
+    }
+}
+
+@OptIn(UnstableApi::class)
+private class HostAwareHttpDataSource(
+    private val akashvaniSource: DataSource,
+    private val generalFmSource: DataSource
+) : DataSource {
+
+    private var activeSource: DataSource = generalFmSource
+
+    private fun isAkashvaniHost(host: String?): Boolean {
+        val h = host?.lowercase() ?: return false
+        val suffixes = listOf(
+            "wavespb.com",
+            "bitgravity.com",
+            "prasarbharati.org",
+            "prasarbharati.gov.in",
+            "akashvani.gov.in",
+            "newsonair.gov.in",
+            "d3r9rhourdc02u.cloudfront.net"
+        )
+        return suffixes.any { h == it || h.endsWith(".$it") }
+    }
+
+    override fun addTransferListener(transferListener: TransferListener) {
+        akashvaniSource.addTransferListener(transferListener)
+        generalFmSource.addTransferListener(transferListener)
+    }
+
+    override fun open(dataSpec: DataSpec): Long {
+        activeSource = if (isAkashvaniHost(dataSpec.uri.host)) {
+            akashvaniSource
+        } else {
+            generalFmSource
+        }
+        return activeSource.open(dataSpec)
+    }
+
+    override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+        return activeSource.read(buffer, offset, length)
+    }
+
+    override fun getUri() = activeSource.uri
+
+    override fun getResponseHeaders() = activeSource.responseHeaders
+
+    override fun close() {
+        activeSource.close()
     }
 }

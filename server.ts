@@ -6,19 +6,16 @@ import type { ReadableStream as WebReadableStream } from 'stream/web';
 import { fileURLToPath } from 'url';
 import JSZip from 'jszip';
 import { createServer as createViteServer } from 'vite';
-import { isAllowedBroadcastHost, isHlsUrl, rewriteHlsPlaylist } from './src/utils/radioLogic.ts';
+import {
+  getBroadcastRequestHeaders,
+  isAllowedBroadcastHost,
+  isHlsUrl,
+  rewriteHlsPlaylist,
+} from './src/utils/radioLogic.ts';
 import type { StationCatalog } from './src/types/radio.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-
-const AKASHVANI_HEADERS: Record<string, string> = {
-  'User-Agent':
-    'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36',
-  Referer: 'https://akashvani.gov.in/',
-  Origin: 'https://akashvani.gov.in',
-  Accept: '*/*',
-};
 
 interface CachedHealth {
   checkedAt: number;
@@ -39,7 +36,7 @@ async function probeUrl(url: string, timeoutMs = 3500): Promise<boolean> {
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const res = await fetch(url, {
-      headers: AKASHVANI_HEADERS,
+      headers: getBroadcastRequestHeaders(url),
       signal: controller.signal,
       redirect: 'follow',
     });
@@ -150,13 +147,15 @@ async function startServer() {
       controller.abort();
     }, 12_000);
 
-    req.on('close', () => {
-      controller.abort();
+    res.on('close', () => {
+      if (!res.writableEnded) {
+        controller.abort();
+      }
     });
 
     try {
       const upstream = await fetch(rawUrl, {
-        headers: AKASHVANI_HEADERS,
+        headers: getBroadcastRequestHeaders(rawUrl),
         signal: controller.signal,
         redirect: 'follow',
       });

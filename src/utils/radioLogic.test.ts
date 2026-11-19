@@ -6,8 +6,10 @@ import {
   filterStations,
   formatDuration,
   formatSeekOffset,
+  getBroadcastRequestHeaders,
   getKeralaIstTime,
   getNextStreamUrl,
+  isAkashvaniHost,
   isAllowedBroadcastHost,
   isHlsUrl,
   isKeralaDaytimeStationOnAir,
@@ -185,4 +187,20 @@ test('classifyPlaybackFailure pinpoints exact failure reasons accurately', () =>
   // 7. Buffering stall watchdog
   const stalled = classifyPlaybackFailure({ station: kerala, isOnline: true, reason: 'stalled' });
   assert.equal(stalled.code, 'stalled');
+});
+
+test('getBroadcastRequestHeaders sends Akashvani headers only to Akashvani hosts and clean media-player UA to Triton/FM hosts', () => {
+  const akUrl = 'https://radio.wavespb.com/live/6ff13de7ea9b53d7/6ff13de7ea9b53d7.m3u8';
+  const sunoUrl = 'https://playerservices.streamtheworld.com/api/livestream-redirect/SUNO917_SC';
+
+  assert.equal(isAkashvaniHost(akUrl), true);
+  assert.equal(isAkashvaniHost(sunoUrl), false);
+
+  const akHeaders = getBroadcastRequestHeaders(akUrl);
+  assert.equal(akHeaders.Referer, 'https://akashvani.gov.in/');
+  assert.match(akHeaders['User-Agent'], /Chrome/);
+
+  const sunoHeaders = getBroadcastRequestHeaders(sunoUrl);
+  assert.equal(sunoHeaders.Referer, undefined);
+  assert.doesNotMatch(sunoHeaders['User-Agent'], /Chrome/);
 });
