@@ -28,8 +28,13 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Accept Android SDK licenses & install Android 35
+        run: |
+          SDK_ROOT="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          SDKMANAGER="$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          echo "Using preinstalled sdkmanager at $SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
+          "$SDKMANAGER" --install "platforms;android-35" "build-tools;35.0.0"
 
       - name: Set up Gradle 8.9
         uses: gradle/actions/setup-gradle@v4
@@ -70,22 +75,22 @@ jobs:
         run: |
           mkdir -p release-dist
           APK_SRC="android/app/build/outputs/apk/release/app-release.apk"
-          APK_OUT="release-dist/Akashvani-v1.0.${{ github.run_number }}.apk"
-          ZIP_OUT="release-dist/Akashvani-v1.0.${{ github.run_number }}-android-apk.zip"
+          APK_NAME="Akashvani-v1.0.${{ github.run_number }}.apk"
+          ZIP_NAME="Akashvani-v1.0.${{ github.run_number }}-android-apk.zip"
 
-          cp "$APK_SRC" "$APK_OUT"
+          cp "$APK_SRC" "release-dist/$APK_NAME"
 
-          cat << 'EOF' > release-dist/HOW-TO-INSTALL.txt
-          Akashvani — Live Malayalam Radio (Android APK)
-          ==============================================
-          1. Unzip this file on your Android phone (Files app -> Extract).
-          2. Tap Akashvani-v1.0.X.apk to install.
-          3. If Android asks for permission to install from your browser/Files app, tap Allow once.
-          4. Open Akashvani, tap the huge Play button, and enjoy live Malayalam Akashvani streams!
-          EOF
+          printf '%s\n' \
+            'Akashvani — Live Malayalam Radio (Android APK)' \
+            '==============================================' \
+            '1. Unzip this file on your Android phone (Files app -> Extract).' \
+            "2. Tap $APK_NAME to install." \
+            '3. If Android asks for permission to install from your browser/Files app, tap Allow once.' \
+            '4. Open Akashvani, tap the huge Play button, and enjoy live Malayalam Akashvani streams!' \
+            > release-dist/HOW-TO-INSTALL.txt
 
-          (cd release-dist && zip -9 "Akashvani-v1.0.${{ github.run_number }}-android-apk.zip" "Akashvani-v1.0.${{ github.run_number }}.apk" "HOW-TO-INSTALL.txt")
-          ls -lh "$ZIP_OUT"
+          (cd release-dist && zip -9 "$ZIP_NAME" "$APK_NAME" "HOW-TO-INSTALL.txt")
+          ls -lh "release-dist/$ZIP_NAME"
 
       - name: Publish ZIP to GitHub Releases
         uses: softprops/action-gh-release@v2

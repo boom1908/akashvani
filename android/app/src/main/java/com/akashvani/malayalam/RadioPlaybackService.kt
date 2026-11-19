@@ -1,4 +1,4 @@
-package `in`.akashvani.malayalam
+package com.akashvani.malayalam
 
 import android.os.Handler
 import android.os.Looper

@@ -1,4 +1,4 @@
-package `in`.akashvani.malayalam
+package com.akashvani.malayalam
 
 import android.Manifest
 import android.content.ComponentName
@@ -171,7 +171,7 @@ private fun AkashvaniAppScreen() {
     }
 
     // Poll HLS live window & sleep timer once per second
-    LaunchedEffect(controller, sleepSecondsLeft) {
+    LaunchedEffect(controller) {
         while (true) {
             controller?.let { player ->
                 val dur = player.duration.coerceAtLeast(0L)

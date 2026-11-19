@@ -1,3 +1,3 @@
 # Keep Media3 and Akashvani models
 -keep class androidx.media3.** { *; }
--keep class in.akashvani.malayalam.** { *; }
+-keep class com.akashvani.malayalam.** { *; }

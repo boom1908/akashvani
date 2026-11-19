@@ -1,4 +1,4 @@
-package `in`.akashvani.malayalam
+package com.akashvani.malayalam
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
